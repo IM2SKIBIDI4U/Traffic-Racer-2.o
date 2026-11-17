@@ -4,54 +4,62 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#07111b" />
-  <title>Traffic Racer 3D</title>
+  <title>Highway Rush — Traffic Racer</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <main id="game-shell" aria-label="Traffic Racer 3D">
+  <main id="game-shell" aria-label="Highway Rush 3D racing game">
     <canvas id="game-canvas" aria-label="3D highway"></canvas>
     <div id="speed-lines" aria-hidden="true"></div>
+
     <section id="hud" aria-live="polite">
       <div class="hud-top">
         <div class="glass stat"><span class="caption">Distance</span><strong><span id="score">0</span><small>m</small></strong></div>
-        <div class="brand"><span class="brand-mark">TR</span><span>HIGHWAY<br><b>RUSH</b></span></div>
+        <div class="brand"><span class="brand-mark">HR</span><span>HIGHWAY<br><b>RUSH</b></span></div>
         <div class="glass stat speed-stat"><span class="caption">Speed</span><strong><span id="speed">0</span><small>km/h</small></strong></div>
       </div>
       <div class="hud-bottom">
         <div class="glass nitro-card"><div class="nitro-heading"><span>NITRO</span><span id="nitro-label">READY</span></div><div class="meter"><div id="nitro-fill"></div></div></div>
-        <div class="hud-actions">
-          <span class="glass wallet">◆ <b id="wallet">0</b></span>
-          <button id="auto-button" class="glass toggle-button" aria-pressed="true">AUTO: ON</button>
-          <button id="garage-button" class="glass icon-button" aria-label="Open garage">▣</button>
-          <button id="night-button" class="glass icon-button" aria-label="Toggle day and night">☼</button>
-          <button id="sound-button" class="glass icon-button" aria-label="Toggle sound">♫</button>
-        </div>
+        <div class="hud-actions"><span class="glass wallet">◆ <b id="wallet">0</b></span><button id="pause-button" class="glass icon-button" aria-label="Pause game">Ⅱ</button></div>
       </div>
+      <div id="near-miss" aria-live="polite">NEAR MISS! <b>+5</b></div>
       <div id="crash-flash"></div>
     </section>
 
-    <div id="start-overlay" class="overlay">
-      <div class="menu-card">
-        <p class="eyebrow">A 3D highway driving game</p><h1>TRAFFIC<br><span>RACER</span></h1>
-        <p class="intro">Thread through traffic. Hold your nerve. Own the open road.</p>
-        <div class="key-guide"><span>← → / A D <small>STEER</small></span><span>W / ↑ <small>ACCELERATE</small></span><span>S / ↓ <small>BRAKE</small></span><span>SHIFT <small>NITRO</small></span></div>
-        <button id="start-button" class="primary-button">Start your engine <span>↗</span></button>
-        <button id="menu-garage-button" class="secondary-button">Open garage · <span id="menu-wallet">0</span> credits</button>
-        <p class="mobile-note">On mobile use the touch controls. AUTO holds the throttle.</p>
+    <section id="main-menu" class="overlay">
+      <div class="menu-card title-card">
+        <p class="eyebrow">A 3D highway driving game</p><h1>HIGHWAY<br><span>RUSH</span></h1>
+        <p class="intro">Find your line. Slip past traffic. Make the road yours.</p>
+        <div class="menu-wallet">◆ <b id="menu-wallet">0</b> credits</div>
+        <button id="menu-play" class="primary-button">Drive <span>↗</span></button>
+        <div class="menu-grid"><button id="menu-garage" class="secondary-button">Garage</button><button id="menu-settings" class="secondary-button">Settings</button></div>
+        <p class="mobile-note">A/D or ←/→ to steer · W/↑ accelerate · S/↓ brake · Shift nitro</p>
       </div>
-    </div>
+    </section>
 
-    <div id="garage-overlay" class="overlay hidden">
-      <div class="menu-card garage-card">
-        <div class="garage-heading"><div><p class="eyebrow">Your collection</p><h2>GARAGE<span>.</span></h2></div><div class="garage-wallet">◆ <b id="garage-wallet">0</b></div></div>
-        <p class="intro garage-intro">Choose your ride. Credits are earned by driving distance.</p>
-        <div class="mode-picker"><span class="caption">ROAD MODE</span><div><button class="mode-button selected" data-mode="one-way">ONE WAY</button><button class="mode-button" data-mode="two-way">TWO WAY</button></div><p id="mode-description"></p></div>
+    <section id="garage-page" class="overlay hidden">
+      <div class="menu-card page-card">
+        <div class="page-heading"><div><p class="eyebrow">Your collection</p><h2>GARAGE<span>.</span></h2></div><div class="page-wallet">◆ <b id="garage-wallet">0</b></div></div>
+        <p class="intro">Buy a car with credits earned on the road, then hit Play.</p>
         <div id="car-list" class="car-list"></div>
-        <div class="garage-actions"><button id="garage-back-button" class="secondary-button">Back</button><button id="garage-drive-button" class="primary-button">Start driving <span>↗</span></button></div>
+        <div class="page-actions"><button class="secondary-button back-menu">Main menu</button><button id="garage-play" class="primary-button">Play <span>↗</span></button></div>
       </div>
-    </div>
+    </section>
 
-    <div id="game-over" class="overlay hidden"><div class="menu-card result-card"><p class="eyebrow">That's a wrap</p><h2>WIPEOUT<span>.</span></h2><p class="intro">Distance covered</p><div id="final-score" class="result-score">0 <small>METERS</small></div><p id="earned-credits" class="earned-credits">+0 credits</p><button id="restart-button" class="primary-button">Race again <span>↗</span></button><button id="result-garage-button" class="secondary-button">Visit garage</button></div></div>
+    <section id="settings-page" class="overlay hidden">
+      <div class="menu-card settings-card">
+        <p class="eyebrow">Make it your drive</p><h2>SETTINGS<span>.</span></h2>
+        <div class="setting-row"><div><b>Automatic acceleration</b><small>Keep the throttle on without holding a key.</small></div><button id="auto-toggle" class="setting-toggle">ON</button></div>
+        <div class="setting-row"><div><b>Road traffic</b><small id="road-mode-note">All four lanes travel in your direction.</small></div><button id="road-mode-toggle" class="setting-toggle">ONE WAY</button></div>
+        <div class="setting-row"><div><b>Night driving</b><small>Switch the scene lighting and headlights.</small></div><button id="night-toggle" class="setting-toggle">DAY</button></div>
+        <div class="setting-row"><div><b>Sound</b><small>Toggle engine and event sounds.</small></div><button id="sound-toggle" class="setting-toggle">ON</button></div>
+        <p class="control-note">Keyboard: A/D or ←/→ steer · W/↑ accelerate · S/↓ brake · Space drift · Shift nitro · Esc pause</p>
+        <button class="secondary-button back-menu">Main menu</button>
+      </div>
+    </section>
+
+    <section id="pause-page" class="overlay hidden"><div class="menu-card result-card"><p class="eyebrow">Take a breather</p><h2>PAUSED<span>.</span></h2><button id="resume-button" class="primary-button">Resume driving <span>↗</span></button><button class="secondary-button back-menu">Main menu</button></div></section>
+    <section id="game-over" class="overlay hidden"><div class="menu-card result-card"><p class="eyebrow">That's a wrap</p><h2>WIPEOUT<span>.</span></h2><p class="intro">Distance covered</p><div id="final-score" class="result-score">0 <small>METERS</small></div><p id="earned-credits" class="earned-credits">+0 credits</p><button id="retry-button" class="primary-button">Race again <span>↗</span></button><button class="secondary-button back-menu">Main menu</button></div></section>
 
     <div id="touch-controls" aria-label="Touch driving controls">
       <button class="touch-button" data-control="left" aria-label="Steer left">‹</button>
