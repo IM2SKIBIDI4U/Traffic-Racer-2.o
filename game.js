@@ -1,4 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
+import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game-canvas');
@@ -149,7 +150,86 @@ function createCar(color, isPlayer = false, style = 0) {
 function createPlayer() {
   const spec = cars.find((car) => car.id === selectedCar) || cars[0];
   player = createCar(spec.color, true); player.position.set(lanes[2], 0, 7); scene.add(player);
+  player.userData.syntheticChildren = [...player.children];
+  applyPlayerCar(selectedCar);
   const lamp = new THREE.SpotLight(0xe5f5ff, 0, 55, Math.PI / 7, 0.55, 1.5); lamp.position.set(0, 1.5, 2.1); lamp.target.position.set(0, 0, -32); player.add(lamp, lamp.target); player.userData.headlamp = lamp;
+}
+
+const gltfLoader = new GLTFLoader();
+let starterModelPromise;
+
+function loadStarterModel() {
+  if (!starterModelPromise) {
+    starterModelPromise = new Promise((resolve, reject) => {
+      gltfLoader.load('./2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), undefined, reject);
+    });
+  }
+  return starterModelPromise;
+}
+
+function prepareStarterModel(source) {
+  const model = source.clone(true);
+  model.updateWorldMatrix(true, true);
+
+  let front, rear;
+  model.traverse((object) => {
+    const name = (object.name || '').toLowerCase();
+    if (!front && (name.includes('ext_headlamp') || name.includes('headlight'))) front = object;
+    if (!rear && (name.includes('ext_taillamp') || name.includes('taillamp') || name.includes('rear_red_glass'))) rear = object;
+  });
+
+  if (front && rear) {
+    const frontBox = new THREE.Box3().setFromObject(front);
+    const rearBox = new THREE.Box3().setFromObject(rear);
+    const frontCenter = frontBox.getCenter(new THREE.Vector3());
+    const rearCenter = rearBox.getCenter(new THREE.Vector3());
+    const frontDirection = frontCenter.sub(rearCenter);
+    if (frontDirection.lengthSq() > 0.001) {
+      const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
+      model.rotation.y -= currentAngle;
+    }
+  }
+
+  model.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const length = Math.max(size.x, size.z);
+  if (length > 0) model.scale.setScalar(4.25 / length);
+
+  model.updateWorldMatrix(true, true);
+  const finalBox = new THREE.Box3().setFromObject(model);
+  const center = finalBox.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -finalBox.min.y, -center.z);
+  model.traverse((object) => {
+    if (object.isMesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
+  return model;
+}
+
+function applyPlayerCar(carId) {
+  if (!player) return;
+  if (player.userData.starterModel) {
+    player.remove(player.userData.starterModel);
+    player.userData.starterModel = null;
+  }
+  for (const child of player.userData.syntheticChildren || []) child.visible = carId !== 'starter';
+
+  if (carId === 'starter') {
+    loadStarterModel()
+      .then((source) => {
+        if (selectedCar !== 'starter') return;
+        const model = prepareStarterModel(source);
+        player.userData.starterModel = model;
+        player.add(model);
+        for (const child of player.userData.syntheticChildren || []) child.visible = false;
+      })
+      .catch(() => {
+        for (const child of player.userData.syntheticChildren || []) child.visible = true;
+      });
+  }
 }
 function createEnvironment() {
   for (let i = 0; i < 8; i++) createRoad(-i * 50);
@@ -184,7 +264,7 @@ function renderGarage() {
     const isOwned = owned.has(car.id), button = document.createElement('button'); button.className = `car-card${selectedCar === car.id ? ' selected' : ''}`; button.style.setProperty('--car-color', `#${car.color.toString(16).padStart(6, '0')}`);
     const state = isOwned ? (selectedCar === car.id ? 'SELECTED' : 'OWNED') : `◆ ${car.cost.toLocaleString()}`;
     button.innerHTML = `<span class="car-swatch"></span><span class="car-name">${car.name}</span><span class="car-cost ${isOwned ? 'owned' : ''}">${state}</span><span class="car-cost">${car.maxSpeed} top · ${car.acceleration} accel</span>`;
-    button.addEventListener('click', () => { if (!isOwned && credits < car.cost) { button.querySelector('.car-cost').textContent = `NEED ${(car.cost - credits).toLocaleString()} MORE`; return; } if (!isOwned) { credits -= car.cost; owned.add(car.id); save('tr-credits', credits); save('tr-owned', JSON.stringify([...owned])); } selectedCar = car.id; save('tr-car', selectedCar); player.userData.paint.color.setHex(car.color); refreshWallet(); renderGarage(); }); list.append(button);
+    button.addEventListener('click', () => { if (!isOwned && credits < car.cost) { button.querySelector('.car-cost').textContent = `NEED ${(car.cost - credits).toLocaleString()} MORE`; return; } if (!isOwned) { credits -= car.cost; owned.add(car.id); save('tr-credits', credits); save('tr-owned', JSON.stringify([...owned])); } selectedCar = car.id; save('tr-car', selectedCar); player.userData.paint.color.setHex(car.color); applyPlayerCar(selectedCar); refreshWallet(); renderGarage(); }); list.append(button);
   }
   // This is a search page rather than a single model. Users can choose and download an individual model there.
   if (!list.querySelector('.sketchfab-link')) { const link = document.createElement('a'); link.className = 'secondary-button sketchfab-link'; link.href = 'https://sketchfab.com/search?category=cars-vehicles&features=downloadable&sort_by=-likeCount&type=models'; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Browse downloadable Sketchfab cars ↗'; list.append(link); }
