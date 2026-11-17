@@ -1,25 +1,5 @@
-# Traffic Racer 3D
+## Update: four-lane traffic and car performance
 
-A browser-based Three.js highway racer with a persistent car garage, credits, day/night lighting, nitro, drifting, sound, and mobile controls.
+The highway now has four marked lanes. One-way mode sends traffic through all four lanes; two-way mode uses the right two lanes for same-direction traffic and the left two for oncoming traffic, separated by a double-yellow divider. Traffic periodically arrives in dense packs, with a spacing check to avoid stacking cars on top of each other.
 
-## Run
-Serve the repository over HTTP because the game uses JavaScript modules:
-
-```bash
-python -m http.server 8000
-```
-
-Open http://localhost:8000. WebGL and internet access for the Three.js CDN are required.
-
-## Controls
-- A/D or arrow keys: steer
-- Space: drift while steering
-- Shift: nitro boost
-- N or the sun/moon button: switch day/night
-- Garage button: buy/select cars and choose one-way or two-way traffic
-- Mobile: use the touch controls
-
-## Garage and modes
-Earn credits based on distance traveled; credits and purchased cars are saved in the browser. Buy and select six cars in the garage. One-way mode puts traffic in your direction; two-way mode adds oncoming traffic and double-yellow center markings. The player car is created as the scene loads and remains visible on the road behind the menu/garage.
-
-The road and terrain segments recycle continuously so the highway has no end.
+Each garage car now has its own acceleration, top speed, and handling. Speed starts at zero and accelerates based on the selected car, while nitro temporarily raises its speed ceiling. Bot cars also have varied speeds, which affect how quickly they approach or pull away from the player.
