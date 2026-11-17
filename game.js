@@ -47,7 +47,7 @@ const particles = [];
 const lanes = [-6.75, -2.25, 2.25, 6.75];
 const keys = { left: false, right: false, accelerate: false, brake: false, drift: false, nitro: false };
 const cars = [
-  { id: 'starter', name: 'ROADSTER', color: 0x1678c8, cost: 0, maxSpeed: 175, acceleration: 25, handling: 8.3 },
+  { id: 'starter', name: 'LEXUS LS 500H', color: 0x1678c8, cost: 0, maxSpeed: 175, acceleration: 25, handling: 8.3 },
   { id: 'rally', name: 'RALLY GT', color: 0xd54b3e, cost: 250, maxSpeed: 205, acceleration: 34, handling: 9.2 },
   { id: 'midnight', name: 'MIDNIGHT', color: 0x403f70, cost: 650, maxSpeed: 225, acceleration: 27, handling: 7.8 },
   { id: 'sunset', name: 'SUNSET', color: 0xe9a33b, cost: 1100, maxSpeed: 195, acceleration: 39, handling: 10.2 },
@@ -186,7 +186,7 @@ function prepareStarterModel(source) {
     const frontDirection = frontCenter.sub(rearCenter);
     if (frontDirection.lengthSq() > 0.001) {
       const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
-      model.rotation.y -= currentAngle;
+      model.rotation.y += Math.PI - currentAngle;
     }
   }
 
@@ -218,6 +218,7 @@ function applyPlayerCar(carId) {
   for (const child of player.userData.syntheticChildren || []) child.visible = carId !== 'starter';
 
   if (carId === 'starter') {
+    for (const child of player.userData.syntheticChildren || []) child.visible = false;
     loadStarterModel()
       .then((source) => {
         if (selectedCar !== 'starter') return;
@@ -227,7 +228,7 @@ function applyPlayerCar(carId) {
         for (const child of player.userData.syntheticChildren || []) child.visible = false;
       })
       .catch(() => {
-        for (const child of player.userData.syntheticChildren || []) child.visible = true;
+        console.error('The starter Lexus GLB could not be loaded.');
       });
   }
 }
