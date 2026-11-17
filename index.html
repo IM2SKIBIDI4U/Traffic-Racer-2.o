@@ -1,49 +1,63 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#07111b" />
     <title>Traffic Racer 3D</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <div id="game-shell">
-      <canvas id="game-canvas"></canvas>
+    <main id="game-shell" aria-label="Traffic Racer 3D game">
+      <canvas id="game-canvas" aria-label="3D highway game"></canvas>
 
-      <div id="hud">
-        <div class="panel score-panel">
-          <span class="label">Score</span>
-          <span id="score">0</span>
+      <section id="hud" aria-live="polite">
+        <div class="hud-top">
+          <div class="glass stat"><span class="caption">Distance</span><strong><span id="score">0</span><small>m</small></strong></div>
+          <div class="brand"><span class="brand-mark">TR</span><span>HIGHWAY<br /><b>RUSH</b></span></div>
+          <div class="glass stat speed-stat"><span class="caption">Speed</span><strong><span id="speed">0</span><small>km/h</small></strong></div>
         </div>
-        <div class="panel speed-panel">
-          <span class="label">Speed</span>
-          <span id="speed">0</span>
-          <span class="unit">km/h</span>
+        <div class="hud-bottom">
+          <div class="glass nitro-card">
+            <div class="nitro-heading"><span>NITRO</span><span id="nitro-label">READY</span></div>
+            <div class="meter"><div id="nitro-fill"></div></div>
+          </div>
+          <div class="hud-actions">
+            <button id="night-button" class="glass icon-button" aria-label="Toggle day and night" title="Toggle day/night">☼</button>
+            <button id="sound-button" class="glass icon-button" aria-label="Toggle sound" title="Toggle sound">♫</button>
+          </div>
         </div>
-      </div>
+        <div id="crash-flash"></div>
+      </section>
 
-      <div id="start-overlay" class="overlay visible">
-        <div class="card">
-          <p class="eyebrow">3D Highway Rush</p>
-          <h1>Traffic Racer</h1>
-          <p>
-            Dodge incoming traffic, weave through the lanes, and survive the
-            rush hour nightmare.
-          </p>
-          <button id="start-button">Start Race</button>
+      <div id="start-overlay" class="overlay">
+        <div class="menu-card">
+          <p class="eyebrow">A 3D highway driving game</p>
+          <h1>TRAFFIC<br /><span>RACER</span></h1>
+          <p class="intro">Thread through traffic. Hold your nerve. Own the open road.</p>
+          <div class="key-guide"><span>← → / A D <small>STEER</small></span><span>SPACE <small>DRIFT</small></span><span>SHIFT <small>NITRO</small></span></div>
+          <button id="start-button" class="primary-button">Start your engine <span>↗</span></button>
+          <p class="mobile-note">On mobile, use the touch controls at the bottom of the screen.</p>
         </div>
       </div>
 
       <div id="game-over" class="overlay hidden">
-        <div class="card">
-          <p class="eyebrow">Run Ended</p>
-          <h2>Crash!</h2>
-          <p id="final-score">Final Score: 0</p>
-          <button id="restart-button">Race Again</button>
+        <div class="menu-card result-card">
+          <p class="eyebrow">That's a wrap</p>
+          <h2>WIPEOUT<span>.</span></h2>
+          <p class="intro">Distance covered</p>
+          <div id="final-score" class="result-score">0 <small>METERS</small></div>
+          <button id="restart-button" class="primary-button">Race again <span>↗</span></button>
         </div>
       </div>
-    </div>
 
+      <div id="touch-controls" aria-label="Touch driving controls">
+        <button class="touch-button" data-control="left" aria-label="Steer left">‹</button>
+        <button class="touch-button drift-button" data-control="drift" aria-label="Drift">DRIFT</button>
+        <button class="touch-button nitro-button" data-control="nitro" aria-label="Use nitro">N₂O</button>
+        <button class="touch-button" data-control="right" aria-label="Steer right">›</button>
+      </div>
+    </main>
     <script type="module" src="./game.js"></script>
   </body>
 </html>
