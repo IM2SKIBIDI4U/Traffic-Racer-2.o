@@ -1,12 +1,4 @@
-# Highway Rush
+## Fixes and asset browsing
 
-A browser-based Three.js traffic racer. Serve the project over HTTP (for example, `python -m http.server 8000`) and open http://localhost:8000.
-
-## Features
-- Near-miss rewards with a modest combo bonus. Earn credits by distance and close passes, and spend them on cars in the garage.
-- Separate title/menu, garage, settings, pause, and result screens.
-- One-way and two-way four-lane traffic, automatic/manual acceleration, braking, drift, nitro, day/night, sound, and touch controls.
-- The displayed speedometer intentionally reads lower than the simulated speed; camera and roadside motion communicate the faster pace.
-- Rounded car silhouettes, smooth wheels, varied roadside scenery, guardrails, and continuous road segments.
-
-Controls: A/D or arrows to steer, W/up to accelerate, S/down to brake, Space to drift, Shift for nitro, Escape to pause.
+- Traffic now uses lane-based following gaps and swept collision checks, so AI cars should no longer overlap by passing through one another at higher speeds. Player collision detection also checks the movement path between frames.
+- The garage includes a link to the provided Sketchfab downloadable-car search. That URL is a search results page, not a particular model file; choose a specific model on Sketchfab and verify its license/attribution and download permissions before using it. No model was imported automatically because the search URL does not identify a downloadable asset.
