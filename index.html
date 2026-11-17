@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Traffic Racer 3D</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div id="game-shell">
+      <canvas id="game-canvas"></canvas>
+
+      <div id="hud">
+        <div class="panel score-panel">
+          <span class="label">Score</span>
+          <span id="score">0</span>
+        </div>
+        <div class="panel speed-panel">
+          <span class="label">Speed</span>
+          <span id="speed">0</span>
+          <span class="unit">km/h</span>
+        </div>
+      </div>
+
+      <div id="start-overlay" class="overlay visible">
+        <div class="card">
+          <p class="eyebrow">3D Highway Rush</p>
+          <h1>Traffic Racer</h1>
+          <p>
+            Dodge incoming traffic, weave through the lanes, and survive the
+            rush hour nightmare.
+          </p>
+          <button id="start-button">Start Race</button>
+        </div>
+      </div>
+
+      <div id="game-over" class="overlay hidden">
+        <div class="card">
+          <p class="eyebrow">Run Ended</p>
+          <h2>Crash!</h2>
+          <p id="final-score">Final Score: 0</p>
+          <button id="restart-button">Race Again</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="./game.js"></script>
+  </body>
+</html>
