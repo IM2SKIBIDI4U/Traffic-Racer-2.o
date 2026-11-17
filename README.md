@@ -1,10 +1,25 @@
 # Traffic Racer 3D
 
-## Driving changes
-- Four lane centers are aligned to the lane markings. In two-way mode the left two lanes are oncoming and the right two lanes travel with the player; traffic is never placed on the center divider.
-- Added brake controls: **S / Down Arrow** or the mobile **BRAKE** button.
-- Added an **AUTO: ON/OFF** option. With auto acceleration off, press **W / Up Arrow** to accelerate; braking and steering continue to work normally.
-- Acceleration now starts from zero, uses the selected car's stats, and includes coasting and braking. The speed camera FOV, lower high-speed viewpoint, and road motion streaks make faster speeds feel faster instead of only changing the number on the HUD.
+A browser-based Three.js highway racer with four lanes, a car garage, traffic modes, brake and auto-acceleration controls, nitro, day/night, sound, and touch controls.
 
-## Run
-Serve the repository over HTTP (the game imports Three.js as a browser module): `python -m http.server 8000`, then open http://localhost:8000.
+## Run locally
+Serve the files over HTTP because the game uses JavaScript modules:
+
+```bash
+python -m http.server 8000
+```
+
+Open http://localhost:8000. WebGL and internet access for the Three.js CDN are required.
+
+## Controls
+- A/D or left/right arrows: steer
+- W/up arrow: accelerate when auto acceleration is off
+- S/down arrow: brake
+- Space: drift while steering
+- Shift: nitro
+- N or the sun/moon button: switch day/night
+- AUTO button: toggle automatic acceleration
+- Garage button: buy/select cars and choose one-way or two-way traffic
+- Touch controls are available on small screens
+
+Credits, owned cars, selected car, traffic mode, and auto-acceleration preference are saved in local browser storage.
