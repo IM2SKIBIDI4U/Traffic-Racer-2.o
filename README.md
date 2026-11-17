@@ -1,5 +1,10 @@
-## Update: four-lane traffic and car performance
+# Traffic Racer 3D
 
-The highway now has four marked lanes. One-way mode sends traffic through all four lanes; two-way mode uses the right two lanes for same-direction traffic and the left two for oncoming traffic, separated by a double-yellow divider. Traffic periodically arrives in dense packs, with a spacing check to avoid stacking cars on top of each other.
+## Driving changes
+- Four lane centers are aligned to the lane markings. In two-way mode the left two lanes are oncoming and the right two lanes travel with the player; traffic is never placed on the center divider.
+- Added brake controls: **S / Down Arrow** or the mobile **BRAKE** button.
+- Added an **AUTO: ON/OFF** option. With auto acceleration off, press **W / Up Arrow** to accelerate; braking and steering continue to work normally.
+- Acceleration now starts from zero, uses the selected car's stats, and includes coasting and braking. The speed camera FOV, lower high-speed viewpoint, and road motion streaks make faster speeds feel faster instead of only changing the number on the HUD.
 
-Each garage car now has its own acceleration, top speed, and handling. Speed starts at zero and accelerates based on the selected car, while nitro temporarily raises its speed ceiling. Bot cars also have varied speeds, which affect how quickly they approach or pull away from the player.
+## Run
+Serve the repository over HTTP (the game imports Three.js as a browser module): `python -m http.server 8000`, then open http://localhost:8000.
