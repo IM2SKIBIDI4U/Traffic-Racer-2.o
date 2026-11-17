@@ -1,29 +1,25 @@
 # Traffic Racer 3D
 
-A small browser-based 3D highway racer built with Three.js. It runs as a static site and loads Three.js from jsDelivr.
+A browser-based Three.js highway racer with a persistent car garage, credits, day/night lighting, nitro, drifting, sound, and mobile controls.
 
-## Run it
-
-Because the game uses JavaScript modules, serve the repository over HTTP rather than opening `index.html` directly:
+## Run
+Serve the repository over HTTP because the game uses JavaScript modules:
 
 ```bash
 python -m http.server 8000
 ```
 
-Then open [http://localhost:8000](http://localhost:8000). Any static web server works. WebGL and an internet connection (for Three.js and the optional display fonts) are required.
+Open http://localhost:8000. WebGL and internet access for the Three.js CDN are required.
 
 ## Controls
+- A/D or arrow keys: steer
+- Space: drift while steering
+- Shift: nitro boost
+- N or the sun/moon button: switch day/night
+- Garage button: buy/select cars and choose one-way or two-way traffic
+- Mobile: use the touch controls
 
-- **A / D** or **← / →**: steer
-- **Space**: drift (steer while holding to slide)
-- **Shift**: nitro boost (recharges when not in use)
-- **N** or the sun/moon button: switch day/night
-- **♫**: mute/unmute synthesized engine and effects
-- **Touch screens**: use the left/right, drift, and nitro buttons
+## Garage and modes
+Earn credits based on distance traveled; credits and purchased cars are saved in the browser. Buy and select six cars in the garage. One-way mode puts traffic in your direction; two-way mode adds oncoming traffic and double-yellow center markings. The player car is created as the scene loads and remains visible on the road behind the menu/garage.
 
-## Included
-
-- Procedural 3D cars, asphalt texture, highway markings, roadside buildings, trees, and street lighting
-- Day/night lighting with headlights and street lamps
-- Traffic collisions, sparks, camera impact, and crash screen
-- Drift scoring, nitro, mobile touch controls, synthesized engine and sound effects
+The road and terrain segments recycle continuously so the highway has no end.
