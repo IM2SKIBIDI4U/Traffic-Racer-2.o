@@ -420,17 +420,36 @@ function loadTrafficModels() {
               child.castShadow = false;
               child.receiveShadow = false;
 
-              // Keep the GLB exactly as authored: vertex colours, material colours,
-              // texture maps, roughness/metalness and all other material settings.
-              // GLTFLoader already creates the correct material types and settings.
-              const originalMaterials = Array.isArray(child.material)
-                ? child.material
-                : [child.material];
-              for (const originalMaterial of originalMaterials) {
-                if (!originalMaterial) continue;
-                if (originalMaterial.map) originalMaterial.map.colorSpace = THREE.SRGBColorSpace;
-                if (originalMaterial.emissiveMap) originalMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+              if (child.geometry.attributes.color) {
+                child.geometry.deleteAttribute('color');
               }
+
+              const fixMaterial = (m) => {
+                if (!m) return new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 });
+                const tex = m.map || m.emissiveMap || null;
+                if (tex) tex.colorSpace = THREE.SRGBColorSpace;
+
+                const baseColor = tex
+                  ? new THREE.Color(0xffffff)
+                  : (m.color ? m.color.clone() : new THREE.Color(0xcccccc));
+
+                return new THREE.MeshStandardMaterial({
+                  map: tex,
+                  color: baseColor,
+                  normalMap: m.normalMap || null,
+                  roughnessMap: m.roughnessMap || null,
+                  metalnessMap: m.metalnessMap || null,
+                  roughness: 0.45,
+                  metalness: 0.2,
+                  transparent: Boolean(m.transparent),
+                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+                  side: THREE.DoubleSide
+                });
+              };
+
+              child.material = Array.isArray(child.material)
+                ? child.material.map(fixMaterial)
+                : fixMaterial(child.material);
             }
           });
 
