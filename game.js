@@ -462,6 +462,13 @@ function loadTrafficModels() {
       });
 
       console.log('Successfully loaded and centered traffic cars:', trafficVehicles.length);
+      console.log('Loaded items:', trafficVehicles.map((v, i) => ({
+  i,
+  name: v.children[0]?.children[0]?.name,
+  w: +(v.userData.collisionHalfWidth * 2).toFixed(2),
+  l: +(v.userData.collisionHalfLength * 2).toFixed(2),
+  meshes: v.getObjectsByProperty('isMesh', true).length
+})));
       if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
     } catch (error) {
       trafficVehicles.length = 0;
