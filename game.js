@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
-import './camera-modes.js';
+import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game-canvas');
@@ -292,10 +292,8 @@ $('loading-message').textContent = 'Loading ' + asset + '…';
 }
 
 function finishLoadingScreen() {
-if (startupLoadFinished) return;
+if (startupLoadFinished || !starterLoadFinished) return;
 startupLoadFinished = true;
-// Show the menu as soon as the lightweight scene and fallback car are ready.
-// Detailed GLB models continue loading in the background.
 $('loading-screen').classList.add('hidden');
 $('main-menu').classList.remove('hidden');
 }
@@ -421,33 +419,18 @@ function loadTrafficModels() {
               child.castShadow = false;
               child.receiveShadow = false;
 
-              if (child.geometry.attributes.color) {
-                child.geometry.deleteAttribute('color');
-              }
-
-              // Convert each material while preserving its original texture map and color
-              const convertMat = (m) => {
-                if (!m) return new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.45 });
+              // Keep the GLTF's original materials and vertex colours. They carry
+              // the separate paint, windows, lights, tyres, chrome and interior details.
+              const preserveMaterial = (m) => {
+                if (!m) return m;
                 if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
                 if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-
-                return new THREE.MeshStandardMaterial({
-                  map: m.map || null,
-                  color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
-                  emissive: m.emissive ? m.emissive.clone() : new THREE.Color(0x000000),
-                  emissiveMap: m.emissiveMap || null,
-                  emissiveIntensity: m.emissiveIntensity || 1,
-                  roughness: typeof m.roughness === 'number' ? m.roughness : 0.45,
-                  metalness: typeof m.metalness === 'number' ? m.metalness : 0.2,
-                  transparent: Boolean(m.transparent),
-                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
-                  side: THREE.DoubleSide
-                });
+                m.needsUpdate = true;
+                return m;
               };
-
               child.material = Array.isArray(child.material)
-                ? child.material.map(convertMat)
-                : convertMat(child.material);
+                ? child.material.map(preserveMaterial)
+                : preserveMaterial(child.material);
             }
           });
 
@@ -457,38 +440,12 @@ function loadTrafficModels() {
           raw.position.set(0, 0, 0);
           raw.updateMatrixWorld(true);
 
-          const rawBox = new THREE.Box3();
-          raw.traverse((child) => {
-            if (child.isMesh && child.geometry) {
-              child.geometry.computeBoundingBox();
-              const b = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
-              rawBox.union(b);
-            }
-          });
+          const sourceBounds = new THREE.Box3().setFromObject(raw);
+          const sourceSize = sourceBounds.getSize(new THREE.Vector3());
+          if (sourceBounds.isEmpty() || sourceSize.lengthSq() === 0) return;
 
-          const rawSize = rawBox.getSize(new THREE.Vector3());
-          if (rawBox.isEmpty() || rawSize.lengthSq() === 0) return;
-
-          const maxHorizontal = Math.max(rawSize.x, rawSize.z);
-          const scale = 4.5 / maxHorizontal;
-          raw.scale.multiplyScalar(scale);
-          raw.updateMatrixWorld(true);
-
-          const scaledBox = new THREE.Box3();
-          raw.traverse((child) => {
-            if (child.isMesh && child.geometry) {
-              const b = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
-              scaledBox.union(b);
-            }
-          });
-
-          const center = scaledBox.getCenter(new THREE.Vector3());
-          const size = scaledBox.getSize(new THREE.Vector3());
-          raw.position.set(-center.x, -scaledBox.min.y, -center.z);
-
-          // Orient each imported vehicle so its front points down the player's
-          // road direction (-Z). The source pack contains differently oriented
-          // models, so use its front/rear wheel names when they are available.
+          // Identify the vehicle's forward direction from named front/rear wheel
+          // assemblies when available; otherwise use the longer horizontal axis.
           let frontWheel;
           let rearWheel;
           raw.traverse((child) => {
@@ -496,32 +453,58 @@ function loadTrafficModels() {
             if (!frontWheel && (name.startsWith('on_teker') || name === 'wheels_new_trucks_on')) frontWheel = child;
             if (!rearWheel && (name.startsWith('arka_teker') || name === 'wheels_new_trucks_arka1')) rearWheel = child;
           });
-          let facingRotation = Math.PI + (size.x > size.z * 1.15 ? Math.PI / 2 : 0);
-          if (frontWheel && rearWheel) {
-            const frontCenter = new THREE.Box3().setFromObject(frontWheel).getCenter(new THREE.Vector3());
-            const rearCenter = new THREE.Box3().setFromObject(rearWheel).getCenter(new THREE.Vector3());
-            const direction = frontCenter.sub(rearCenter);
-            if (direction.lengthSq() > 0.001) facingRotation = Math.atan2(direction.x, -direction.z);
-          }
 
           const pivot = new THREE.Group();
           pivot.add(raw);
-          pivot.rotation.y = facingRotation;
+          if (frontWheel && rearWheel) {
+            const frontCenter = new THREE.Box3().setFromObject(frontWheel).getCenter(new THREE.Vector3());
+            const rearCenter = new THREE.Box3().setFromObject(rearWheel).getCenter(new THREE.Vector3());
+            const forward = frontCenter.sub(rearCenter);
+            if (forward.lengthSq() > 0.001) {
+              pivot.rotation.y = Math.atan2(forward.x, -forward.z);
+            }
+          } else if (sourceSize.x > sourceSize.z * 1.12) {
+            pivot.rotation.y = Math.PI / 2;
+          }
+
+          pivot.updateMatrixWorld(true);
+          const orientedBounds = new THREE.Box3().setFromObject(pivot);
+          const orientedSize = orientedBounds.getSize(new THREE.Vector3());
+          if (orientedBounds.isEmpty() || orientedSize.z < 0.01) return;
+
+          // Normalize by vehicle length, then constrain width so vans/trucks do
+          // not spill into neighbouring lanes while compact cars remain visible.
+          const targetLength = THREE.MathUtils.clamp(orientedSize.z, 2.8, 7.5);
+          let scale = 4.65 / targetLength;
+          if (orientedSize.x * scale > 2.35) scale = 2.35 / orientedSize.x;
+          if (orientedSize.y * scale > 2.25) scale = Math.min(scale, 2.25 / orientedSize.y);
+          pivot.scale.setScalar(scale);
           pivot.updateMatrixWorld(true);
 
-          const finalBox = new THREE.Box3().setFromObject(pivot);
-          const finalSize = finalBox.getSize(new THREE.Vector3());
+          const finalBounds = new THREE.Box3().setFromObject(pivot);
+          const finalSize = finalBounds.getSize(new THREE.Vector3());
+          const center = finalBounds.getCenter(new THREE.Vector3());
+          pivot.position.x -= center.x;
+          pivot.position.y -= finalBounds.min.y;
+          pivot.position.z -= center.z;
+          pivot.traverse((child) => {
+            if (child.isMesh) {
+              child.castShadow = true;
+              child.receiveShadow = false;
+              child.frustumCulled = true;
+            }
+          });
 
-          if (finalSize.y < 0.9 || finalSize.x < 1.2 || finalSize.z < 2.2) return;
+          if (finalSize.y < 0.45 || finalSize.x < 0.85 || finalSize.z < 2.4) return;
 
           const wrapper = new THREE.Group();
           wrapper.name = object.name || `vehicle_${index}`;
           wrapper.add(pivot);
           wrapper.userData.wheels = getTrafficWheels(wrapper);
-          wrapper.userData.collisionHalfWidth = Math.min(1.05, Math.max(0.75, finalSize.x * 0.42));
-          wrapper.userData.collisionHalfLength = Math.min(2.4, Math.max(1.6, finalSize.z * 0.44));
+          wrapper.userData.collisionHalfWidth = Math.min(1.12, Math.max(0.58, finalSize.x * 0.47));
+          wrapper.userData.collisionHalfLength = Math.min(3.15, Math.max(1.25, finalSize.z * 0.46));
 
-          trafficVehicles.push(wrapper);
+
         });
 
         if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
@@ -1077,6 +1060,7 @@ if (dt === 0) camera.position.copy(position);
 else camera.position.lerp(position, 1 - Math.exp(-8 * dt));
 if (cameraShake) camera.position.x += (Math.random() - 0.5) * cameraShake;
 camera.lookAt(target);
+applyCameraMode(camera, player, dt);
 }
 function resize() {
 const width = canvas.clientWidth || innerWidth;
@@ -1174,9 +1158,8 @@ setNight(night);
 renderGarage();
 refreshWallet();
 resize();
-// Let the player reach the menu immediately; detailed traffic models load
-// asynchronously and replace the procedural fallback on later spawns.
-finishLoadingScreen();
+// Keep the loading screen up until the selected starter Lexus model is ready.
+// NPC models load independently and never delay the Lexus/menu.
 window.setTimeout(loadTrafficModels, 0);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
