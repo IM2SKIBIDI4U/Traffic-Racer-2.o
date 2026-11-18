@@ -386,7 +386,7 @@ model.userData.collisionHalfLength = scaledSize.z * 0.47;
 return model;
 }
 function loadTrafficModels() {
-  gltfLoader.load('./traffic_rider_npc_vehicles.glb', (gltf) => {
+  gltfLoader.load('https://github.com/IM2SKIBIDI4U/Traffic-Racer-2.o/raw/refs/heads/main/traffic_rider_npc_vehicles.glb?download=', (gltf) => {
     try {
       gltf.scene.children.forEach((object) => {
         if (object.isObject3D) {
