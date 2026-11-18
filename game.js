@@ -876,67 +876,81 @@ player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performan
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
 function updateTraffic(dt, previousPlayer) {
-if (burstTimer > 0) burstTimer -= dt;
-else if ((burstCooldown -= dt) <= 0) {
-burstTimer = 4 + Math.random() * 3;
-burstCooldown = 13 + Math.random() * 14;
-spawnTimer = 0;
-}
-spawnTimer -= dt;
-if (spawnTimer <= 0) {
-const dense = burstTimer > 0;
-const count = dense && Math.random() < 0.3 ? 2 : 1;
-for (let i = 0; i < count; i++) spawnTraffic();
-spawnTimer = dense ? 0.22 + Math.random() * 0.2 : 0.7 + Math.random() * 0.55;
-}
-const oldPositions = new Map(traffic.map((item) => [item, item.mesh.position.z]));
-const playerMps = actualSpeed / 3.6 * 2;
-for (const item of traffic) {
-const botMps = item.botSpeed / 3.6 * 2;
-item.mesh.position.z += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
-for (const wheel of item.mesh.userData.wheels) wheel.rotation.x += item.botSpeed / 3.6 * dt;
-}
-const laneGroups = new Map();
-for (const item of traffic) {
-if (!laneGroups.has(item.lane)) laneGroups.set(item.lane, []);
-laneGroups.get(item.lane).push(item);
-}
-for (const group of laneGroups.values()) {
-group.sort((a, b) => oldPositions.get(a) - oldPositions.get(b));
-for (let index = 1; index < group.length; index++) {
-const leader = group[index - 1];
-const follower = group[index];
-const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
-follower.mesh.position.z = Math.max(follower.mesh.position.z, leader.mesh.position.z + safeGap);
-}
-}
-for (let index = traffic.length - 1; index >= 0; index--) {
-const item = traffic[index];
-const newZ = item.mesh.position.z;
-const prevRelZ = oldPositions.get(item) - previousPlayer.z;
-const nextRelZ = newZ - player.position.z;
-const relDeltaZ = nextRelZ - prevRelZ;
-const t = relDeltaZ === 0 ? 0 : THREE.MathUtils.clamp(-prevRelZ / relDeltaZ, 0, 1);
-const closestZ = prevRelZ + relDeltaZ * t;
-const closestPlayerX = THREE.MathUtils.lerp(previousPlayer.x, player.position.x, t);
-const dx = Math.abs(closestPlayerX - item.mesh.position.x);
-if (
-Math.abs(closestZ) < (player.userData.collisionHalfLength || 2.1) + (item.mesh.userData.collisionHalfLength || 2.1) &&
-dx < (player.userData.collisionHalfWidth || 1.05) + (item.mesh.userData.collisionHalfWidth || 1.05)
-) {
-finishGame();
-return;
-}
-if (!item.checkedMiss && prevRelZ < 0 && nextRelZ >= 0) {
-item.checkedMiss = true;
-if (dx > 1.9 && dx < 3.3) showNearMiss();
-else if (dx >= 3.3) nearMissChain = 0;
-}
-if (newZ > 24 || newZ < -190) {
-scene.remove(item.mesh);
-traffic.splice(index, 1);
-}
-}
+  if (!running) return;
+
+  if (burstTimer > 0) burstTimer -= dt;
+  else if ((burstCooldown -= dt) <= 0) {
+    burstTimer = 4 + Math.random() * 3;
+    burstCooldown = 13 + Math.random() * 14;
+    spawnTimer = 0;
+  }
+  spawnTimer -= dt;
+  if (spawnTimer <= 0) {
+    const dense = burstTimer > 0;
+    const count = dense && Math.random() < 0.3 ? 2 : 1;
+    for (let i = 0; i < count; i++) spawnTraffic();
+    spawnTimer = dense ? 0.22 + Math.random() * 0.2 : 0.7 + Math.random() * 0.55;
+  }
+
+  const oldPositions = new Map(traffic.map((item) => [item, item.mesh.position.z]));
+  const playerMps = actualSpeed / 3.6 * 2;
+
+  for (const item of traffic) {
+    const botMps = item.botSpeed / 3.6 * 2;
+    item.mesh.position.z += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
+    for (const wheel of (item.mesh.userData.wheels || [])) {
+      wheel.rotation.x += item.botSpeed / 3.6 * dt;
+    }
+  }
+
+  const laneGroups = new Map();
+  for (const item of traffic) {
+    if (!laneGroups.has(item.lane)) laneGroups.set(item.lane, []);
+    laneGroups.get(item.lane).push(item);
+  }
+  for (const group of laneGroups.values()) {
+    group.sort((a, b) => oldPositions.get(a) - oldPositions.get(b));
+    for (let index = 1; index < group.length; index++) {
+      const leader = group[index - 1];
+      const follower = group[index];
+      const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
+      follower.mesh.position.z = Math.max(follower.mesh.position.z, leader.mesh.position.z + safeGap);
+    }
+  }
+
+  for (let index = traffic.length - 1; index >= 0; index--) {
+    const item = traffic[index];
+    const newZ = item.mesh.position.z;
+    const prevRelZ = oldPositions.get(item) - previousPlayer.z;
+    const nextRelZ = newZ - player.position.z;
+    const relDeltaZ = nextRelZ - prevRelZ;
+    const t = relDeltaZ === 0 ? 0 : THREE.MathUtils.clamp(-prevRelZ / relDeltaZ, 0, 1);
+    const closestZ = prevRelZ + relDeltaZ * t;
+    const closestPlayerX = THREE.MathUtils.lerp(previousPlayer.x, player.position.x, t);
+    const dx = Math.abs(closestPlayerX - item.mesh.position.x);
+
+    if (
+      Math.abs(closestZ) < (player.userData.collisionHalfLength || 2.1) + (item.mesh.userData.collisionHalfLength || 2.1) &&
+      dx < (player.userData.collisionHalfWidth || 1.05) + (item.mesh.userData.collisionHalfWidth || 1.05)
+    ) {
+      console.log('Hit vehicle:', item.mesh.name || 'unnamed', 'at', item.mesh.position.toArray());
+      running = false;
+      actualSpeed = 0;
+      finishGame();
+      return;
+    }
+
+    if (!item.checkedMiss && prevRelZ < 0 && nextRelZ >= 0) {
+      item.checkedMiss = true;
+      if (dx > 1.9 && dx < 3.3) showNearMiss();
+      else if (dx >= 3.3) nearMissChain = 0;
+    }
+
+    if (newZ > 24 || newZ < -190) {
+      scene.remove(item.mesh);
+      traffic.splice(index, 1);
+    }
+  }
 }
 function update(dt) {
 for (let index = particles.length - 1; index >= 0; index--) {
