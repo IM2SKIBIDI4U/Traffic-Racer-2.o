@@ -395,14 +395,43 @@ function loadTrafficModels() {
         container = container.children[0];
       }
 
-      // Reuse a small shared material pool so WebGL doesn't lag compiling dozens of shaders
-      const sharedMaterials = [
-        0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff
-      ].map((hex) => new THREE.MeshStandardMaterial({
-        color: hex,
-        roughness: 0.45,
-        metalness: 0.2
-      }));
+    const tireMat = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: 0.85, metalness: 0.1 });
+const glassMat = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.15, metalness: 0.8 });
+
+// Inside object.traverse((child) => { ... })
+if (child.isMesh && child.geometry) {
+  const posAttr = child.geometry.attributes.position;
+  if (!posAttr || posAttr.count === 0) return;
+  hasMesh = true;
+  totalVertices += posAttr.count;
+  child.frustumCulled = false;
+  child.visible = true;
+  child.castShadow = false;
+  child.receiveShadow = false;
+
+  if (child.geometry.attributes.color) {
+    child.geometry.deleteAttribute('color');
+  }
+
+  const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
+  const partName = `${child.name} ${oldMat?.name || ''}`.toLowerCase();
+
+  if (oldMat?.map) {
+    oldMat.map.colorSpace = THREE.SRGBColorSpace;
+    child.material = new THREE.MeshStandardMaterial({
+      map: oldMat.map,
+      color: 0xffffff,
+      roughness: 0.4,
+      metalness: 0.25
+    });
+  } else if (/wheel|tire|tyre|rim|exhaust|grille|under/.test(partName)) {
+    child.material = tireMat;
+  } else if (/glass|window|windshield/.test(partName) || oldMat?.transparent) {
+    child.material = glassMat;
+  } else {
+    child.material = sharedMaterials[index % sharedMaterials.length];
+  }
+}
 
       container.children.forEach((object, index) => {
         const lowerName = (object.name || '').toLowerCase();
