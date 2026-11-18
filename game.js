@@ -395,32 +395,46 @@ function loadTrafficModels() {
         container = container.children[0];
       }
 
-      const fallbackColors = [0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff];
+      // Reuse a small shared material pool so WebGL doesn't lag compiling dozens of shaders
+      const sharedMaterials = [
+        0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff
+      ].map((hex) => new THREE.MeshStandardMaterial({
+        color: hex,
+        roughness: 0.45,
+        metalness: 0.2
+      }));
 
       container.children.forEach((object, index) => {
+        const lowerName = (object.name || '').toLowerCase();
+        if (/plane|ground|floor|road|light|camera|backdrop|grid/.test(lowerName)) return;
+
         let hasMesh = false;
         object.traverse((child) => {
           if (child.isMesh) {
             hasMesh = true;
             child.frustumCulled = false;
             child.visible = true;
+            // Disable shadow casting on high-poly NPCs to fix FPS lag
+            child.castShadow = false;
+            child.receiveShadow = false;
+
             if (child.geometry?.attributes.color) {
               child.geometry.deleteAttribute('color');
             }
-            const oldMats = Array.isArray(child.material) ? child.material : [child.material];
-            const newMats = oldMats.map((m) => new THREE.MeshStandardMaterial({
-              map: m?.map || null,
-              color: m?.map ? 0xffffff : (m?.color || fallbackColors[index % fallbackColors.length]),
-              roughness: 0.45,
-              metalness: 0.2,
-              side: THREE.DoubleSide
-            }));
-            child.material = Array.isArray(child.material) ? newMats : newMats[0];
+            const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
+            if (oldMat?.map) {
+              child.material = new THREE.MeshStandardMaterial({
+                map: oldMat.map,
+                roughness: 0.45,
+                metalness: 0.2
+              });
+            } else {
+              child.material = sharedMaterials[index % sharedMaterials.length];
+            }
           }
         });
         if (!hasMesh) return;
 
-        // 1. Put the car in a clean pivot and reset any parking-lot offset
         const raw = object.clone(true);
         raw.position.set(0, 0, 0);
         raw.updateMatrixWorld(true);
@@ -429,19 +443,16 @@ function loadTrafficModels() {
         const rawSize = rawBox.getSize(new THREE.Vector3());
         if (rawSize.lengthSq() === 0) return;
 
-        // 2. Scale to standard ~4.5m car length
         const maxHorizontal = Math.max(rawSize.x, rawSize.z);
         const scale = 4.5 / maxHorizontal;
         raw.scale.multiplyScalar(scale);
         raw.updateMatrixWorld(true);
 
-        // 3. Re-measure after scaling and snap center X/Z to 0 and bottom Y to 0
         const scaledBox = new THREE.Box3().setFromObject(raw);
         const center = scaledBox.getCenter(new THREE.Vector3());
         const size = scaledBox.getSize(new THREE.Vector3());
         raw.position.set(-center.x, -scaledBox.min.y, -center.z);
 
-        // If the car was exported sideways (wider than long), rotate 90 degrees
         const pivot = new THREE.Group();
         pivot.add(raw);
         if (size.x > size.z * 1.15) {
@@ -452,23 +463,19 @@ function loadTrafficModels() {
         const finalBox = new THREE.Box3().setFromObject(pivot);
         const finalSize = finalBox.getSize(new THREE.Vector3());
 
+        // Skip flat/invisible objects (like ground planes or loose parts)
+        if (finalSize.y < 0.85 || finalSize.x < 1.1) return;
+
         const wrapper = new THREE.Group();
         wrapper.add(pivot);
         wrapper.userData.wheels = getTrafficWheels(wrapper);
-        wrapper.userData.collisionHalfWidth = Math.max(0.75, finalSize.x * 0.44);
-        wrapper.userData.collisionHalfLength = Math.max(1.6, finalSize.z * 0.46);
+        wrapper.userData.collisionHalfWidth = Math.min(1.15, Math.max(0.75, finalSize.x * 0.44));
+        wrapper.userData.collisionHalfLength = Math.min(2.6, Math.max(1.6, finalSize.z * 0.46));
 
         trafficVehicles.push(wrapper);
       });
 
-      console.log('Successfully loaded and centered traffic cars:', trafficVehicles.length);
-      console.log('Loaded items:', trafficVehicles.map((v, i) => ({
-  i,
-  name: v.children[0]?.children[0]?.name,
-  w: +(v.userData.collisionHalfWidth * 2).toFixed(2),
-  l: +(v.userData.collisionHalfLength * 2).toFixed(2),
-  meshes: v.getObjectsByProperty('isMesh', true).length
-})));
+      console.log('Filtered traffic cars:', trafficVehicles.length);
       if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
     } catch (error) {
       trafficVehicles.length = 0;
