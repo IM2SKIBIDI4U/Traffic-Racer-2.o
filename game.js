@@ -575,6 +575,7 @@ starterLoadFinished = true;
 finishLoadingScreen();
 });
 }
+}
 function createEnvironment() {
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
 for (let i = 0; i < 3; i++) {
