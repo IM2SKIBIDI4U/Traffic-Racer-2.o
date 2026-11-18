@@ -348,42 +348,45 @@ if (object.children.length && (name.includes('teker') || name.startsWith('wheels
 });
 return wheels;
 }
-function prepareTrafficModel(source) {
-const model = source.clone(true);
-model.updateWorldMatrix(true, true);
-let front;
-let rear;
-model.traverse((object) => {
-const name = (object.name || '').toLowerCase();
-if (!front && (name.startsWith('on_teker') || name === 'wheels_new_trucks_on')) front = object;
-if (!rear && (name.startsWith('arka_teker') || name === 'wheels_new_trucks_arka1')) rear = object;
-});
-if (front && rear) {
-const frontCenter = new THREE.Box3().setFromObject(front).getCenter(new THREE.Vector3());
-const rearCenter = new THREE.Box3().setFromObject(rear).getCenter(new THREE.Vector3());
-const direction = frontCenter.sub(rearCenter);
-if (direction.lengthSq() > 0.001) model.rotation.y += Math.PI - Math.atan2(direction.x, direction.z);
-}
-model.updateWorldMatrix(true, true);
-const bounds = new THREE.Box3().setFromObject(model);
-const size = bounds.getSize(new THREE.Vector3());
-const length = Math.max(size.x, size.z);
-if (!Number.isFinite(length) || length <= 0) throw new Error('Traffic vehicle model has no measurable dimensions');
-model.scale.multiplyScalar(4.5 / length);
-model.updateWorldMatrix(true, true);
-const scaledBounds = new THREE.Box3().setFromObject(model);
-const center = scaledBounds.getCenter(new THREE.Vector3());
-const scaledSize = scaledBounds.getSize(new THREE.Vector3());
-model.position.set(-center.x, -scaledBounds.min.y, -center.z);
-model.traverse((object) => {
-if (object.isMesh) {
-object.castShadow = true;
-object.receiveShadow = true;
-}
-});
-model.userData.collisionHalfWidth = Math.max(0.8, scaledSize.x * 0.46);
-model.userData.collisionHalfLength = scaledSize.z * 0.47;
-return model;
+function loadTrafficModels() {
+  gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
+    try {
+      // Drill down if all 20 cars are inside one master container node
+      let container = gltf.scene;
+      while (container.children.length === 1 && container.children[0].children.length > 1) {
+        container = container.children[0];
+      }
+
+      container.children.forEach((object) => {
+        // Check if this object actually contains a 3D mesh (skips cameras/lights)
+        let hasMesh = false;
+        object.traverse((child) => { if (child.isMesh) hasMesh = true; });
+        if (!hasMesh) return;
+
+        // Wrap in a Group so prepareTrafficModel's position offset stays intact when driving
+        const wrapper = new THREE.Group();
+        const prepared = prepareTrafficModel(object);
+        wrapper.add(prepared);
+        wrapper.userData = { ...prepared.userData };
+        trafficVehicles.push(wrapper);
+      });
+
+      console.log('Loaded traffic cars:', trafficVehicles.length);
+      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
+    } catch (error) {
+      trafficVehicles.length = 0;
+      console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+      $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+    } finally {
+      trafficLoadFinished = true;
+      finishLoadingScreen();
+    }
+  }, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
+    console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
+    $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+    trafficLoadFinished = true;
+    finishLoadingScreen();
+  });
 }
 function loadTrafficModels() {
   gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
