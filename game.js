@@ -517,7 +517,7 @@ function loadTrafficModels() {
         finishLoadingScreen();
       }
     },
-    (event) => updateLoadingScreen(event, 'traffic models'),
+    () => { /* Keep Lexus loading progress visible while traffic loads. */ },
     (error) => {
       console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
@@ -574,10 +574,6 @@ console.error('Could not load 2023_lexus_ls_500h.glb:', err);
 starterLoadFinished = true;
 finishLoadingScreen();
 });
-} else {
-starterLoadFinished = true;
-finishLoadingScreen();
-}
 }
 function createEnvironment() {
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
@@ -1158,8 +1154,19 @@ setNight(night);
 renderGarage();
 refreshWallet();
 resize();
-// Keep the loading screen up until the selected starter Lexus model is ready.
-// NPC models load independently and never delay the Lexus/menu.
+// Always preload the Lexus before showing the menu, even if another owned
+// car was selected during a previous session. Traffic loads independently.
+loadStarterModel()
+  .then(() => {
+    starterLoadFinished = true;
+    finishLoadingScreen();
+  })
+  .catch((error) => {
+    console.error('Could not preload the Lexus model:', error);
+    $('loading-message').textContent = 'Lexus model unavailable — using backup car.';
+    starterLoadFinished = true;
+    finishLoadingScreen();
+  });
 window.setTimeout(loadTrafficModels, 0);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
