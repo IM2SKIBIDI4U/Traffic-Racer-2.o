@@ -292,8 +292,10 @@ $('loading-message').textContent = 'Loading ' + asset + '…';
 }
 
 function finishLoadingScreen() {
-if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished) return;
+if (startupLoadFinished) return;
 startupLoadFinished = true;
+// Show the menu as soon as the lightweight scene and fallback car are ready.
+// Detailed GLB models continue loading in the background.
 $('loading-screen').classList.add('hidden');
 $('main-menu').classList.remove('hidden');
 }
@@ -414,7 +416,7 @@ function loadTrafficModels() {
               if (!posAttr || posAttr.count === 0) return;
               hasMesh = true;
               totalVertices += posAttr.count;
-              child.frustumCulled = false;
+              child.frustumCulled = true;
               child.visible = true;
               child.castShadow = false;
               child.receiveShadow = false;
@@ -484,11 +486,27 @@ function loadTrafficModels() {
           const size = scaledBox.getSize(new THREE.Vector3());
           raw.position.set(-center.x, -scaledBox.min.y, -center.z);
 
+          // Orient each imported vehicle so its front points down the player's
+          // road direction (-Z). The source pack contains differently oriented
+          // models, so use its front/rear wheel names when they are available.
+          let frontWheel;
+          let rearWheel;
+          raw.traverse((child) => {
+            const name = (child.name || '').toLowerCase();
+            if (!frontWheel && (name.startsWith('on_teker') || name === 'wheels_new_trucks_on')) frontWheel = child;
+            if (!rearWheel && (name.startsWith('arka_teker') || name === 'wheels_new_trucks_arka1')) rearWheel = child;
+          });
+          let facingRotation = Math.PI + (size.x > size.z * 1.15 ? Math.PI / 2 : 0);
+          if (frontWheel && rearWheel) {
+            const frontCenter = new THREE.Box3().setFromObject(frontWheel).getCenter(new THREE.Vector3());
+            const rearCenter = new THREE.Box3().setFromObject(rearWheel).getCenter(new THREE.Vector3());
+            const direction = frontCenter.sub(rearCenter);
+            if (direction.lengthSq() > 0.001) facingRotation = Math.atan2(direction.x, -direction.z);
+          }
+
           const pivot = new THREE.Group();
           pivot.add(raw);
-          if (size.x > size.z * 1.15) {
-            pivot.rotation.y = Math.PI / 2;
-          }
+          pivot.rotation.y = facingRotation;
           pivot.updateMatrixWorld(true);
 
           const finalBox = new THREE.Box3().setFromObject(pivot);
@@ -643,9 +661,11 @@ function spawnTraffic() {
     car.userData.collisionHalfLength = source.userData.collisionHalfLength;
   } else {
     car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
+    // The procedural model's headlights are on +Z; rotate it to face forward (-Z).
+    car.rotation.y = Math.PI;
   }
   car.position.set(lane, 0, z);
-  if (oncoming) car.rotation.y = Math.PI;
+  if (oncoming) car.rotation.y += Math.PI;
   if (night) {
     const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
     light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
@@ -1149,12 +1169,15 @@ else if (audioContext) engineGain.gain.setTargetAtTime(0, audioContext.currentTi
 });
 syncSettings();
 createEnvironment();
-loadTrafficModels();
 createPlayer();
 setNight(night);
 renderGarage();
 refreshWallet();
 resize();
+// Let the player reach the menu immediately; detailed traffic models load
+// asynchronously and replace the procedural fallback on later spawns.
+finishLoadingScreen();
+window.setTimeout(loadTrafficModels, 0);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 animate();
