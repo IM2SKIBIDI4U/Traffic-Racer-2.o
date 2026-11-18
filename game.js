@@ -397,6 +397,7 @@ function loadTrafficModels() {
     } catch (error) {
       trafficVehicles.length = 0;
       console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+      console.log('GLB structure:', gltf.scene.children.map(c => ({ name: c.name, kids: c.children.length })));
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
     } finally {
       trafficLoadFinished = true;
