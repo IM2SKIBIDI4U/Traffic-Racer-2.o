@@ -353,44 +353,8 @@ if (object.children.length && (name.includes('teker') || name.startsWith('wheels
 return wheels;
 }
 
-// Give each detailed GLB traffic car a distinct paint colour while preserving
-// the model's texture maps and leaving glass, tyres, lights and trim unchanged.
-function applyTrafficPaint(model, hexColor) {
-const paint = new THREE.Color(hexColor);
-const excluded = /glass|window|windshield|wheel|tyre|tire|rubber|lamp|light|chrome|mirror|interior|seat|grille|grill|trim|brake|disc/;
-const bodyHint = /body|paint|car.?shell|shell|exterior|vehicle.?body|chassis.?cover/;
-const clonedMaterials = new Map();
-let paintedMeshes = 0;
-model.traverse((object) => {
-if (!object.isMesh || !object.material) return;
-const objectName = (object.name || '').toLowerCase();
-const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-const nextMaterials = sourceMaterials.map((source) => {
-if (!source) return source;
-let clone = clonedMaterials.get(source);
-if (!clone) {
-clone = source.clone();
-clonedMaterials.set(source, clone);
-}
-const label = objectName + ' ' + (clone.name || '').toLowerCase();
-if (excluded.test(label) || !clone.color) return clone;
-const color = clone.color;
-const brightest = Math.max(color.r, color.g, color.b);
-const darkest = Math.min(color.r, color.g, color.b);
-const neutralGrey = brightest - darkest < 0.2 && brightest > 0.22;
-if (bodyHint.test(label) || neutralGrey) {
-const brightness = Math.max(0.55, Math.min(1, (color.r + color.g + color.b) / 3));
-color.copy(paint).multiplyScalar(brightness);
-clone.needsUpdate = true;
-paintedMeshes++;
-}
-return clone;
-});
-object.material = Array.isArray(object.material) ? nextMaterials : nextMaterials[0];
-});
-if (!paintedMeshes) console.warn('Traffic GLB has no recognizable paint material; original materials retained.');
-return paintedMeshes;
-}
+// Traffic models keep their original GLB materials, textures and vertex colours,
+// just like the Lexus player model. Do not recolour these source assets.
 function prepareTrafficModel(source) {
   const model = source.clone(true);
   model.updateWorldMatrix(true, true);
@@ -671,12 +635,10 @@ function spawnTraffic() {
   const oncoming = roadMode === 'two-way' && lane < 0;
   const botSpeed = 60 + Math.random() * 100;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
-  const trafficPaints = [0xc83e36, 0x2369b5, 0xe0a52f, 0x31845e, 0xeeeeea, 0x454b59, 0x7b4a9c, 0xc87532];
   let car;
   if (trafficVehicles.length) {
     const source = trafficVehicles[Math.floor(Math.random() * trafficVehicles.length)];
     car = source.clone(true);
-    applyTrafficPaint(car, trafficPaints[Math.floor(Math.random() * trafficPaints.length)]);
     car.userData.wheels = getTrafficWheels(car);
     car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
     car.userData.collisionHalfLength = source.userData.collisionHalfLength;
