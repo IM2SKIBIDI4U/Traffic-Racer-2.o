@@ -1,5 +1,4 @@
-# Highway Rush
+## AI traffic and camera modes
 
-A 3D highway driving game with a first-person driving view. Traffic cars are randomized from `traffic_rider_npc_vehicles.glb`; the included Lexus model is used for the starter car.
-
-Controls: A/D or arrow keys to steer, W/Up to accelerate, S/Down to brake, Space to drift, Shift for nitro, and Esc to pause. On-screen controls are available on touch devices.
+- The AI vehicle GLB is stored using Git LFS. `asset-compat.js` redirects the game loader to GitHub's LFS media endpoint so GitHub Pages retrieves the actual model rather than the tiny LFS pointer file.
+- Added four switchable views: chase, hood, cockpit, and overhead. Use the on-screen camera button or press **C** while driving; the selected view is saved locally.
