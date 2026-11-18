@@ -1,5 +1,89 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/loaders/GLTFLoader.js';
+import { DRACOLoader } from 'https://jsdelivr.net';
+
+const gltfLoader = new GLTFLoader();
+const dracoLoader = new DRACOLoader();
+dracoLoader.setDecoderPath('https://gstatic.com');
+gltfLoader.setDRACOLoader(dracoLoader);
+
+let starterModelPromise;
+
+function loadStarterModel() {
+  if (!starterModelPromise) {
+    starterModelPromise = new Promise((resolve, reject) => {
+      gltfLoader.load('2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), undefined, reject);
+    });
+  }
+  return starterModelPromise;
+}
+
+function prepareStarterModel(source) {
+  const model = source.clone(true);
+  model.updateWorldMatrix(true, true);
+
+  let front, rear;
+  model.traverse((object) => {
+    const name = (object.name || '').toLowerCase();
+    if (!front && (name.includes('ext_headlamp') || name.includes('headlight'))) front = object;
+    if (!rear && (name.includes('ext_taillamp') || name.includes('taillamp') || name.includes('rear_red_glass'))) rear = object;
+  });
+
+  if (front && rear) {
+    const frontBox = new THREE.Box3().setFromObject(front);
+    const rearBox = new THREE.Box3().setFromObject(rear);
+    const frontCenter = frontBox.getCenter(new THREE.Vector3());
+    const rearCenter = rearBox.getCenter(new THREE.Vector3());
+    const frontDirection = frontCenter.sub(rearCenter);
+    if (frontDirection.lengthSq() > 0.001) {
+      const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
+      model.rotation.y += Math.PI - currentAngle;
+    }
+  }
+
+  model.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const length = Math.max(size.x, size.z);
+  if (length > 0) model.scale.setScalar(4.25 / length);
+
+  model.updateWorldMatrix(true, true);
+  const finalBox = new THREE.Box3().setFromObject(model);
+  const center = finalBox.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -finalBox.min.y, -center.z);
+  model.traverse((object) => {
+    if (object.isMesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
+  return model;
+}
+
+function applyPlayerCar(carId) {
+  if (!player) return;
+  if (player.userData.starterModel) {
+    player.remove(player.userData.starterModel);
+    player.userData.starterModel = null;
+  }
+
+  // Keep the backup car visible until the 3D model actually finishes loading
+  for (const child of player.userData.syntheticChildren || []) child.visible = true;
+
+  if (carId === 'starter') {
+    loadStarterModel()
+      .then((source) => {
+        if (selectedCar !== 'starter') return;
+        const model = prepareStarterModel(source);
+        player.userData.starterModel = model;
+        player.add(model);
+        for (const child of player.userData.syntheticChildren || []) child.visible = false;
+      })
+      .catch((err) => {
+        console.error('Could not load 2023_lexus_ls_500h.glb:', err);
+      });
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game-canvas');
