@@ -439,20 +439,61 @@ list.append(link);
 }
 refreshWallet();
 }
+const $ = (id) => document.getElementById(id);
+
+// Show one overlay screen and hide all others
 function showPage(id) {
-document.querySelectorAll('.overlay').forEach((page) => page.classList.add('hidden'));
-if (id) $(id).classList.remove('hidden');
+  document.querySelectorAll('.overlay').forEach((page) => {
+    page.classList.add('hidden');
+  });
+  if (id && $(id)) {
+    $(id).classList.remove('hidden');
+  }
 }
-function showMenu() { running = false; paused = false; showPage('main-menu'); }
-function showGarage() { if (running) { running = false; paused = false; } renderGarage(); showPage('garage-page'); }
-function showSettings() { if (running) { running = false; paused = false; } syncSettings(); showPage('settings-page'); }
-function syncSettings() {
-const set = (id, label, active) => {
-const button = $(id);
-button.textContent = label;
-button.classList.toggle('active', active);
-button.setAttribute('aria-pressed', String(active));
-};
+
+// Start Menu & Navigation Buttons
+$('menu-play')?.addEventListener('click', () => {
+  showPage(''); // Hides the menu to start driving
+  window.dispatchEvent(new Event('highway:start'));
+});
+
+$('garage-play')?.addEventListener('click', () => {
+  showPage('');
+  window.dispatchEvent(new Event('highway:start'));
+});
+
+$('retry-button')?.addEventListener('click', () => {
+  showPage('');
+  window.dispatchEvent(new Event('highway:start'));
+});
+
+$('menu-garage')?.addEventListener('click', () => {
+  showPage('garage-page');
+  window.dispatchEvent(new Event('highway:garage'));
+});
+
+$('menu-settings')?.addEventListener('click', () => {
+  showPage('settings-page');
+  window.dispatchEvent(new Event('highway:settings'));
+});
+
+$('pause-button')?.addEventListener('click', () => {
+  showPage('pause-page');
+  window.dispatchEvent(new Event('highway:pause'));
+});
+
+$('resume-button')?.addEventListener('click', () => {
+  showPage('');
+  window.dispatchEvent(new Event('highway:resume'));
+});
+
+document.querySelectorAll('.back-menu').forEach((button) => {
+  button.addEventListener('click', () => {
+    showPage('main-menu');
+    window.dispatchEvent(new Event('highway:menu'));
+  });
+});
+
 set('auto-toggle', autoAccel ? 'ON' : 'OFF', autoAccel);
 set('road-mode-toggle', roadMode === 'one-way' ? 'ONE WAY' : 'TWO WAY', roadMode === 'two-way');
 set('night-toggle', night ? 'NIGHT' : 'DAY', night);
