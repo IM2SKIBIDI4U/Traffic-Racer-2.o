@@ -404,13 +404,9 @@ function loadTrafficModels() {
             hasMesh = true;
             child.frustumCulled = false;
             child.visible = true;
-
-            // Remove broken/black vertex color attributes if present
-            if (child.geometry && child.geometry.attributes.color) {
+            if (child.geometry?.attributes.color) {
               child.geometry.deleteAttribute('color');
             }
-
-            // Replace unsupported KHR_materials_pbrSpecularGlossiness with clean StandardMaterial
             const oldMats = Array.isArray(child.material) ? child.material : [child.material];
             const newMats = oldMats.map((m) => new THREE.MeshStandardMaterial({
               map: m?.map || null,
@@ -424,14 +420,48 @@ function loadTrafficModels() {
         });
         if (!hasMesh) return;
 
+        // 1. Put the car in a clean pivot and reset any parking-lot offset
+        const raw = object.clone(true);
+        raw.position.set(0, 0, 0);
+        raw.updateMatrixWorld(true);
+
+        const rawBox = new THREE.Box3().setFromObject(raw);
+        const rawSize = rawBox.getSize(new THREE.Vector3());
+        if (rawSize.lengthSq() === 0) return;
+
+        // 2. Scale to standard ~4.5m car length
+        const maxHorizontal = Math.max(rawSize.x, rawSize.z);
+        const scale = 4.5 / maxHorizontal;
+        raw.scale.multiplyScalar(scale);
+        raw.updateMatrixWorld(true);
+
+        // 3. Re-measure after scaling and snap center X/Z to 0 and bottom Y to 0
+        const scaledBox = new THREE.Box3().setFromObject(raw);
+        const center = scaledBox.getCenter(new THREE.Vector3());
+        const size = scaledBox.getSize(new THREE.Vector3());
+        raw.position.set(-center.x, -scaledBox.min.y, -center.z);
+
+        // If the car was exported sideways (wider than long), rotate 90 degrees
+        const pivot = new THREE.Group();
+        pivot.add(raw);
+        if (size.x > size.z * 1.15) {
+          pivot.rotation.y = Math.PI / 2;
+        }
+        pivot.updateMatrixWorld(true);
+
+        const finalBox = new THREE.Box3().setFromObject(pivot);
+        const finalSize = finalBox.getSize(new THREE.Vector3());
+
         const wrapper = new THREE.Group();
-        const prepared = prepareTrafficModel(object);
-        wrapper.add(prepared);
-        wrapper.userData = { ...prepared.userData };
+        wrapper.add(pivot);
+        wrapper.userData.wheels = getTrafficWheels(wrapper);
+        wrapper.userData.collisionHalfWidth = Math.max(0.75, finalSize.x * 0.44);
+        wrapper.userData.collisionHalfLength = Math.max(1.6, finalSize.z * 0.46);
+
         trafficVehicles.push(wrapper);
       });
 
-      console.log('Successfully loaded traffic cars:', trafficVehicles.length);
+      console.log('Successfully loaded and centered traffic cars:', trafficVehicles.length);
       if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
     } catch (error) {
       trafficVehicles.length = 0;
