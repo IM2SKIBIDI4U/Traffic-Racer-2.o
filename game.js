@@ -397,26 +397,6 @@ function loadTrafficModels() {
           container = container.children[0];
         }
 
-        const sharedMaterials = [
-          0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff
-        ].map((hex) => new THREE.MeshStandardMaterial({
-          color: hex,
-          roughness: 0.45,
-          metalness: 0.2
-        }));
-
-        const tireMat = new THREE.MeshStandardMaterial({
-          color: 0x1b1e23,
-          roughness: 0.85,
-          metalness: 0.1
-        });
-
-        const glassMat = new THREE.MeshStandardMaterial({
-          color: 0x101820,
-          roughness: 0.15,
-          metalness: 0.8
-        });
-
         container.children.forEach((object, index) => {
           const lowerName = (object.name || '').toLowerCase();
           if (/plane|ground|floor|road|light|camera|backdrop|grid/.test(lowerName)) return;
@@ -439,24 +419,29 @@ function loadTrafficModels() {
                 child.geometry.deleteAttribute('color');
               }
 
-              const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
-              const partName = `${child.name} ${oldMat?.name || ''}`.toLowerCase();
+              // Convert each material while preserving its original texture map and color
+              const convertMat = (m) => {
+                if (!m) return new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.45 });
+                if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
+                if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
 
-              if (oldMat?.map) {
-                oldMat.map.colorSpace = THREE.SRGBColorSpace;
-                child.material = new THREE.MeshStandardMaterial({
-                  map: oldMat.map,
-                  color: 0xffffff,
-                  roughness: 0.4,
-                  metalness: 0.25
+                return new THREE.MeshStandardMaterial({
+                  map: m.map || null,
+                  color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
+                  emissive: m.emissive ? m.emissive.clone() : new THREE.Color(0x000000),
+                  emissiveMap: m.emissiveMap || null,
+                  emissiveIntensity: m.emissiveIntensity || 1,
+                  roughness: typeof m.roughness === 'number' ? m.roughness : 0.45,
+                  metalness: typeof m.metalness === 'number' ? m.metalness : 0.2,
+                  transparent: Boolean(m.transparent),
+                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
+                  side: THREE.DoubleSide
                 });
-              } else if (/wheel|tire|tyre|rim|exhaust|grille|under/.test(partName)) {
-                child.material = tireMat;
-              } else if (/glass|window|windshield/.test(partName) || oldMat?.transparent) {
-                child.material = glassMat;
-              } else {
-                child.material = sharedMaterials[index % sharedMaterials.length];
-              }
+              };
+
+              child.material = Array.isArray(child.material)
+                ? child.material.map(convertMat)
+                : convertMat(child.material);
             }
           });
 
@@ -517,7 +502,6 @@ function loadTrafficModels() {
           trafficVehicles.push(wrapper);
         });
 
-        console.log('Loaded traffic vehicles:', trafficVehicles.length);
         if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
       } catch (error) {
         trafficVehicles.length = 0;
@@ -809,30 +793,46 @@ function finishGame() {
   nitroActive = false;
   cameraShake = 0.5;
 
-  if (audioContext && engineGain) {
-    engineGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
+  try {
+    if (audioContext && engineGain) {
+      engineGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
+    }
+  } catch (e) { /* ignore audio errors */ }
+
+  try {
+    const flash = $('crash-flash');
+    if (flash) {
+      flash.classList.remove('active');
+      void flash.offsetWidth;
+      flash.classList.add('active');
+    }
+
+    const distanceMeters = Math.floor(score || 0);
+    const bonus = typeof sessionCredits === 'number' ? sessionCredits : 0;
+    const earned = Math.max(0, Math.floor(bonus + distanceMeters / 25));
+    credits = (credits || 0) + earned;
+    save('tr-credits', credits);
+    if (typeof refreshWallet === 'function') refreshWallet();
+
+    if ($('final-score')) {
+      $('final-score').innerHTML = `${distanceMeters.toLocaleString()} <small>METERS</small>`;
+    }
+    if ($('earned-credits')) {
+      $('earned-credits').textContent = `+${earned.toLocaleString()} credits`;
+    }
+  } catch (e) {
+    console.error('Error updating end screen stats:', e);
   }
 
-  const flash = $('crash-flash');
-  if (flash) {
-    flash.classList.remove('active');
-    void flash.offsetWidth;
-    flash.classList.add('active');
-  }
-
-  const distanceMeters = Math.floor(score);
-  const earned = Math.max(0, Math.floor(sessionCredits + distanceMeters / 25));
-  credits += earned;
-  save('tr-credits', credits);
-  refreshWallet();
-
-  $('final-score').innerHTML = `${distanceMeters.toLocaleString()} <small>METERS</small>`;
-  $('earned-credits').textContent = `+${earned.toLocaleString()} credits`;
-
+  // Hide any other open overlays and force #game-over visible on top
+  document.querySelectorAll('.overlay').forEach((el) => el.classList.add('hidden'));
   const gameOverScreen = $('game-over');
   if (gameOverScreen) {
     gameOverScreen.classList.remove('hidden');
     gameOverScreen.style.display = 'flex';
+    gameOverScreen.style.opacity = '1';
+    gameOverScreen.style.pointerEvents = 'auto';
+    gameOverScreen.style.zIndex = '999';
   }
 }
 function initAudio() {
