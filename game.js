@@ -255,7 +255,8 @@ let starterModelPromise;
 function loadStarterModel() {
   if (!starterModelPromise) {
     starterModelPromise = new Promise((resolve, reject) => {
-gltfLoader.load(new URL('./2023_lexus_ls_500h.glb', import.meta.url).href, (gltf) => resolve(gltf.scene), undefined, reject);
+// GitHub Pages serves the Git LFS pointer; this URL serves the actual LFS object.
+gltfLoader.load('https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), undefined, reject);
 });
 }
 return starterModelPromise;
