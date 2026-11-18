@@ -406,14 +406,12 @@ function loadTrafficModels() {
           if (/plane|ground|floor|road|light|camera|backdrop|grid/.test(lowerName)) return;
 
           let hasMesh = false;
-          let totalVertices = 0;
 
           object.traverse((child) => {
             if (child.isMesh && child.geometry) {
               const posAttr = child.geometry.attributes.position;
               if (!posAttr || posAttr.count === 0) return;
               hasMesh = true;
-              totalVertices += posAttr.count;
               child.frustumCulled = true;
               child.visible = true;
               child.castShadow = false;
@@ -434,7 +432,7 @@ function loadTrafficModels() {
             }
           });
 
-          if (!hasMesh || totalVertices > 90000) return;
+          if (!hasMesh) return;
 
           const raw = object.clone(true);
           raw.position.set(0, 0, 0);
