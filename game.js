@@ -619,16 +619,6 @@ function spawnTraffic() {
     car.add(light);
   }
   scene.add(car);
-  const debugBox = new THREE.Mesh(
-  new THREE.BoxGeometry(
-    (car.userData.collisionHalfWidth || 0.9) * 2,
-    1.6,
-    (car.userData.collisionHalfLength || 2.1) * 2
-  ),
-  new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
-);
-debugBox.position.y = 0.8;
-car.add(debugBox);
   if (traffic.length === 0) {
     const b = new THREE.Box3().setFromObject(car);
     console.log('First spawned car:', {
@@ -766,23 +756,32 @@ window.clearTimeout(showNearMiss.timeout);
 showNearMiss.timeout = window.setTimeout(() => toast.classList.remove('show'), 950);
 }
 function finishGame() {
-if (!running) return;
-running = false;
-nitroActive = false;
-cameraShake = 0.8;
-addSparks(player.position.clone().add(new THREE.Vector3(0, 0.7, 0)), 34);
-playTone(90, 0.5, 'sawtooth', 0.13);
-awardCredits(Math.floor(score / 120));
-$('earned-credits').textContent = '+' + sessionCredits + ' credits earned';
-$('final-score').innerHTML = Math.floor(score).toLocaleString() + ' METERS';
-const flash = $('crash-flash');
-flash.style.transition = 'none';
-flash.style.opacity = '0.7';
-requestAnimationFrame(() => {
-flash.style.transition = 'opacity .55s';
-flash.style.opacity = '0';
-});
-window.setTimeout(() => { if (!running) showPage('game-over'); }, 350);
+  if (!running) return;
+  running = false;
+  paused = false;
+  actualSpeed = 0;
+  steerVelocity = 0;
+  nitroActive = false;
+  cameraShake = 0.45;
+
+  // Mute engine sound on crash
+  if (audioContext && engineGain) {
+    engineGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
+  }
+
+  // Save earned credits
+  const earned = Math.max(0, Math.floor(sessionCredits));
+  credits += earned;
+  save('tr-credits', credits);
+  if (typeof refreshWallet === 'function') refreshWallet();
+
+  // Populate end-screen stats (update these IDs if your HTML uses different names)
+  if ($('final-score')) $('final-score').textContent = Math.floor(score).toLocaleString();
+  if ($('final-credits')) $('final-credits').textContent = '+' + earned;
+
+  // Show the game-over / end-screen overlay and hide the HUD
+  if ($('hud')) $('hud').classList.add('hidden');
+  if ($('gameover-screen')) $('gameover-screen').classList.remove('hidden');
 }
 function initAudio() {
 if (!soundEnabled || audioContext) return;
