@@ -386,19 +386,23 @@ model.userData.collisionHalfLength = scaledSize.z * 0.47;
 return model;
 }
 function loadTrafficModels() {
-gltfLoader.load('./traffic_rider_npc_vehicles.glb', (gltf) => {
-try {
-gltf.scene.traverse((object) => {
-if (object.name.startsWith('AI_') && object.children.length) trafficVehicles.push(prepareTrafficModel(object));
-});
-if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
-} catch (error) {
-trafficVehicles.length = 0;
-console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
-$('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-} finally {
-trafficLoadFinished = true;
-finishLoadingScreen();
+  gltfLoader.load('./traffic_rider_npc_vehicles.glb', (gltf) => {
+    try {
+      gltf.scene.children.forEach((object) => {
+        if (object.isObject3D) {
+          trafficVehicles.push(prepareTrafficModel(object));
+        }
+      });
+      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
+    } catch (error) {
+      trafficVehicles.length = 0;
+      console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+      $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+    } finally {
+      trafficLoadFinished = true;
+      finishInitialLoad(); // Make sure this matches your original cut-off line (e.g., finishLoading())
+    }
+  });
 }
 }, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
 console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
