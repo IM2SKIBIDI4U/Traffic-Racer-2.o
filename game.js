@@ -550,39 +550,41 @@ if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
 }
 function spawnTraffic() {
-if (traffic.length >= 16) return;
-const lane = chooseTrafficLane();
-const z = -105 - Math.random() * 30;
-if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z - z) < 24)) return;
-const oncoming = roadMode === 'two-way' && lane < 0;
-const botSpeed = 60 + Math.random() * 100;
-const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
-let car;
-if (trafficVehicles.length) {
-const source = trafficVehicles[Math.floor(Math.random() * trafficVehicles.length)];
-car = source.clone(true);
-car.userData.wheels = getTrafficWheels(car);
-car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
-car.userData.collisionHalfLength = source.userData.collisionHalfLength;
-} else {
-car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
-}
-car.position.set(lane, 0, z);
-if (oncoming) car.rotation.y = Math.PI;
-if (night) {
-const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
-light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
-car.add(light);
-}
-scene.add(car);
-if (traffic.length === 0) {
-  const b = new THREE.Box3().setFromObject(car);
-  console.log('First spawned car:', {
-    pos: car.position.toArray(),
-    min: b.min.toArray(),
-    max: b.max.toArray(),
-    meshes: car.getObjectsByProperty('isMesh', true).length
-  });
+  if (traffic.length >= 16) return;
+  const lane = chooseTrafficLane();
+  const z = -105 - Math.random() * 30;
+  if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z - z) < 24)) return;
+  const oncoming = roadMode === 'two-way' && lane < 0;
+  const botSpeed = 60 + Math.random() * 100;
+  const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
+  let car;
+  if (trafficVehicles.length) {
+    const source = trafficVehicles[Math.floor(Math.random() * trafficVehicles.length)];
+    car = source.clone(true);
+    car.userData.wheels = getTrafficWheels(car);
+    car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
+    car.userData.collisionHalfLength = source.userData.collisionHalfLength;
+  } else {
+    car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
+  }
+  car.position.set(lane, 0, z);
+  if (oncoming) car.rotation.y = Math.PI;
+  if (night) {
+    const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
+    light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
+    car.add(light);
+  }
+  scene.add(car);
+  if (traffic.length === 0) {
+    const b = new THREE.Box3().setFromObject(car);
+    console.log('First spawned car:', {
+      pos: car.position.toArray(),
+      min: b.min.toArray(),
+      max: b.max.toArray(),
+      meshes: car.getObjectsByProperty('isMesh', true).length
+    });
+  }
+  traffic.push({ mesh: car, lane, oncoming, botSpeed, checkedMiss: false, previousZ: z });
 }
 function clearTraffic() {
 for (const item of traffic) scene.remove(item.mesh);
