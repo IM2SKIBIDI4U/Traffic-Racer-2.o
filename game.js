@@ -762,26 +762,34 @@ function finishGame() {
   actualSpeed = 0;
   steerVelocity = 0;
   nitroActive = false;
-  cameraShake = 0.45;
+  cameraShake = 0.5;
 
-  // Mute engine sound on crash
+  // Mute engine sound
   if (audioContext && engineGain) {
     engineGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
   }
 
-  // Save earned credits
-  const earned = Math.max(0, Math.floor(sessionCredits));
+  // Trigger red crash flash
+  const flash = $('crash-flash');
+  if (flash) {
+    flash.classList.remove('active');
+    void flash.offsetWidth;
+    flash.classList.add('active');
+  }
+
+  // Calculate & save earned credits
+  const distanceMeters = Math.floor(score);
+  const earned = Math.max(0, Math.floor(sessionCredits + distanceMeters / 25));
   credits += earned;
   save('tr-credits', credits);
-  if (typeof refreshWallet === 'function') refreshWallet();
+  refreshWallet();
 
-  // Populate end-screen stats (update these IDs if your HTML uses different names)
-  if ($('final-score')) $('final-score').textContent = Math.floor(score).toLocaleString();
-  if ($('final-credits')) $('final-credits').textContent = '+' + earned;
+  // Update the WIPEOUT end screen stats
+  $('final-score').innerHTML = `${distanceMeters.toLocaleString()} <small>METERS</small>`;
+  $('earned-credits').textContent = `+${earned.toLocaleString()} credits`;
 
-  // Show the game-over / end-screen overlay and hide the HUD
-  if ($('hud')) $('hud').classList.add('hidden');
-  if ($('gameover-screen')) $('gameover-screen').classList.remove('hidden');
+  // Show the Wipeout end screen
+  $('game-over').classList.remove('hidden');
 }
 function initAudio() {
 if (!soundEnabled || audioContext) return;
