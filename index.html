@@ -34,7 +34,19 @@
       <div id="crash-flash"></div>
     </section>
 
-    <section id="main-menu" class="overlay">
+    <section id="loading-screen" class="overlay loading-screen" role="status" aria-live="polite">
+      <div class="menu-card loading-card">
+        <p class="eyebrow">Preparing your drive</p>
+        <h2>HIGHWAY<span> RUSH.</span></h2>
+        <div class="loading-spinner" aria-hidden="true"></div>
+        <p id="loading-message" class="intro">Loading vehicle model…</p>
+        <div id="loading-progress" class="loading-track" role="progressbar" aria-label="Loading vehicle model" aria-valuemin="0" aria-valuemax="100">
+          <div id="loading-fill" class="loading-fill"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="main-menu" class="overlay hidden">
       <div class="menu-card title-card">
         <p class="eyebrow">A 3D highway driving game</p><h1>HIGHWAY<br><span>RUSH</span></h1>
         <p class="intro">Find your line. Slip past traffic. Make the road yours.</p>

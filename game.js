@@ -48,12 +48,12 @@ const particles = [];
 const lanes = [-6.75, -2.25, 2.25, 6.75];
 const keys = { left: false, right: false, accelerate: false, brake: false, drift: false, nitro: false };
 const cars = [
-  { id: 'starter', name: 'LEXUS LS 500H', color: 0x1678c8, cost: 0, maxSpeed: 175, acceleration: 25, handling: 8.3 },
-  { id: 'rally', name: 'RALLY GT', color: 0xd54b3e, cost: 250, maxSpeed: 205, acceleration: 34, handling: 9.2 },
-  { id: 'midnight', name: 'MIDNIGHT', color: 0x403f70, cost: 650, maxSpeed: 225, acceleration: 27, handling: 7.8 },
-  { id: 'sunset', name: 'SUNSET', color: 0xe9a33b, cost: 1100, maxSpeed: 195, acceleration: 39, handling: 10.2 },
-  { id: 'emerald', name: 'EMERALD', color: 0x328260, cost: 1700, maxSpeed: 240, acceleration: 31, handling: 8.5 },
-  { id: 'silver', name: 'SILVERLINE', color: 0xb8c3c6, cost: 2600, maxSpeed: 260, acceleration: 36, handling: 9.0 },
+  { id: 'starter', name: 'LEXUS LS 500H', color: 0x1678c8, cost: 0, maxSpeed: 175, acceleration: 25, handling: 8.3, modelStyle: 0 },
+  { id: 'rally', name: 'RALLY GT', color: 0xd54b3e, cost: 250, maxSpeed: 205, acceleration: 34, handling: 9.2, modelStyle: 1 },
+  { id: 'midnight', name: 'MIDNIGHT SUV', color: 0x403f70, cost: 650, maxSpeed: 225, acceleration: 27, handling: 7.8, modelStyle: 2 },
+  { id: 'sunset', name: 'SUNSET COUPE', color: 0xe9a33b, cost: 1100, maxSpeed: 195, acceleration: 39, handling: 10.2, modelStyle: 1 },
+  { id: 'emerald', name: 'EMERALD SUV', color: 0x328260, cost: 1700, maxSpeed: 240, acceleration: 31, handling: 8.5, modelStyle: 2 },
+  { id: 'silver', name: 'SILVERLINE VAN', color: 0xb8c3c6, cost: 2600, maxSpeed: 260, acceleration: 36, handling: 9.0, modelStyle: 3 },
 ];
 
 function load(key, fallback) {
@@ -163,30 +163,47 @@ function createCar(color, isPlayer = false, style = 0) {
   const glass = material(0x162a35, 0.2, 0.25, { metalness: 0.2, roughness: 0.18 });
   const rubber = material(0x111417, 0.92);
   const rim = material(0x9ba9ad, 0.28, 0.75);
-  const width = style ? 2.08 : 1.88;
-  const length = style ? 4.8 : 4.25;
-  const lower = new THREE.Mesh(new THREE.CapsuleGeometry(width * 0.44, length * 0.72, 4, 12), paint);
-  lower.rotation.x = Math.PI / 2;
-  lower.scale.set(1, 1, 0.37);
-  lower.position.y = 0.64;
+  const width = style === 2 || style === 3 ? 2.08 : style === 1 ? 1.82 : 1.88;
+  const length = style === 3 ? 5.1 : style === 2 ? 4.8 : style === 1 ? 4.5 : 4.25;
+  const lower = new THREE.Mesh(
+    style === 3
+      ? new THREE.BoxGeometry(width * 0.9, 0.78, length * 0.92)
+      : new THREE.CapsuleGeometry(width * 0.44, length * (style === 1 ? 0.82 : 0.72), 4, 12),
+    paint
+  );
+  if (style !== 3) {
+    lower.rotation.x = Math.PI / 2;
+    lower.scale.set(1, 1, style === 1 ? 0.32 : 0.37);
+  }
+  lower.position.y = style === 3 ? 0.7 : style === 2 ? 0.72 : 0.64;
   lower.castShadow = true;
   group.add(lower);
   const hood = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), paint);
-  hood.scale.set(width * 0.48, 0.18, 0.73);
-  hood.position.set(0, 0.92, 1.36);
+  hood.scale.set(width * 0.48, style === 2 ? 0.23 : 0.18, style === 3 ? 0.62 : style === 1 ? 0.65 : 0.73);
+  hood.position.set(0, style === 2 ? 1 : 0.92, length * (style === 3 ? 0.34 : 0.32));
   group.add(hood);
   const cabin = new THREE.Mesh(new THREE.SphereGeometry(1, 18, 12), glass);
-  cabin.scale.set(width * 0.37, 0.43, 0.98);
-  cabin.position.set(0, 1.13, -0.22);
+  cabin.scale.set(
+    width * (style === 1 ? 0.35 : 0.37),
+    style === 2 || style === 3 ? 0.47 : style === 1 ? 0.31 : 0.43,
+    style === 3 ? 0.62 : style === 1 ? 0.77 : 0.98
+  );
+  cabin.position.set(0, style === 2 || style === 3 ? 1.22 : style === 1 ? 1.04 : 1.13, style === 3 ? 0.12 : -0.22);
   cabin.castShadow = true;
   group.add(cabin);
   const roof = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 10), paint);
-  roof.scale.set(width * 0.31, 0.19, 0.62);
-  roof.position.set(0, 1.48, -0.28);
+  roof.scale.set(width * 0.31, style === 2 || style === 3 ? 0.15 : style === 1 ? 0.13 : 0.19, style === 3 ? 0.53 : style === 1 ? 0.48 : 0.62);
+  roof.position.set(0, style === 2 || style === 3 ? 1.69 : style === 1 ? 1.32 : 1.48, style === 3 ? 0.12 : -0.28);
   group.add(roof);
+  if (style === 3) {
+    const cargo = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.78, 1.35), paint);
+    cargo.position.set(0, 0.91, -1.28);
+    cargo.castShadow = true;
+    group.add(cargo);
+  }
   const wheelMeshes = [];
   for (const side of [-1, 1]) {
-    for (const z of [1.22, -1.32]) {
+    for (const z of [length * 0.29, -length * 0.31]) {
       const wheel = new THREE.Group();
       wheel.position.set(side * (width * 0.48), 0.4, z);
       const tire = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.12, 9, 16), rubber);
@@ -226,6 +243,8 @@ function createCar(color, isPlayer = false, style = 0) {
   group.userData.paint = paint;
   group.userData.wheels = wheelMeshes;
   group.userData.body = lower;
+  group.userData.bodyBaseY = lower.position.y;
+  group.userData.modelStyle = style;
   group.userData.collisionHalfWidth = width * 0.52;
   group.userData.collisionHalfLength = length * 0.47;
   return group;
@@ -233,7 +252,7 @@ function createCar(color, isPlayer = false, style = 0) {
 
 function createPlayer() {
   const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
-  player = createCar(spec.color, true);
+  player = createCar(spec.color, true, spec.modelStyle);
   player.position.set(lanes.at(2), 0, 7);
   scene.add(player);
   player.userData.syntheticChildren = [...player.children];
@@ -251,12 +270,32 @@ dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5
 gltfLoader.setDRACOLoader(dracoLoader);
 
 let starterModelPromise;
+let startupLoadFinished = false;
+
+function updateLoadingScreen(event) {
+const progress = event.total ? Math.floor(event.loaded / event.total * 100) : null;
+const fill = $('loading-fill');
+if (progress !== null) {
+fill.style.width = progress + '%';
+$('loading-message').textContent = 'Loading vehicle model… ' + progress + '%';
+$('loading-progress').setAttribute('aria-valuenow', String(progress));
+} else {
+$('loading-message').textContent = 'Loading vehicle model…';
+}
+}
+
+function finishLoadingScreen() {
+if (startupLoadFinished) return;
+startupLoadFinished = true;
+$('loading-screen').classList.add('hidden');
+$('main-menu').classList.remove('hidden');
+}
 
 function loadStarterModel() {
   if (!starterModelPromise) {
     starterModelPromise = new Promise((resolve, reject) => {
 // GitHub Pages serves the Git LFS pointer; this URL serves the actual LFS object.
-gltfLoader.load('https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), undefined, reject);
+gltfLoader.load('https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), updateLoadingScreen, reject);
 });
 }
 return starterModelPromise;
@@ -267,8 +306,8 @@ model.updateWorldMatrix(true, true);
 let front, rear;
 model.traverse((object) => {
 const name = (object.name || '').toLowerCase();
-if (!front && (name.includes('ext_headlamp') || name.includes('headlight'))) front = object;
-if (!rear && (name.includes('ext_taillamp') || name.includes('taillamp') || name.includes('rear_red_glass'))) rear = object;
+if (!front && name === 'ext_headlamps') front = object;
+if (!rear && name === 'ext_taillamps') rear = object;
 });
 if (front && rear) {
 const frontBox = new THREE.Box3().setFromObject(front);
@@ -278,7 +317,7 @@ const rearCenter = rearBox.getCenter(new THREE.Vector3());
 const frontDirection = frontCenter.sub(rearCenter);
 if (frontDirection.lengthSq() > 0.001) {
 const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
-model.rotation.y += Math.PI - currentAngle;
+model.rotation.y -= currentAngle;
 }
 }
 model.updateWorldMatrix(true, true);
@@ -300,6 +339,30 @@ return model;
 }
 function applyPlayerCar(carId) {
 if (!player) return;
+const spec = cars.find((car) => car.id === carId) || cars[0];
+if (player.userData.modelStyle !== spec.modelStyle) {
+for (const child of player.userData.syntheticChildren || []) {
+player.remove(child);
+child.traverse((object) => {
+object.geometry?.dispose();
+for (const item of Array.isArray(object.material) ? object.material : [object.material]) item?.dispose();
+});
+}
+const replacement = createCar(spec.color, true, spec.modelStyle);
+const children = [...replacement.children];
+for (const child of children) {
+replacement.remove(child);
+player.add(child);
+}
+player.userData.syntheticChildren = children;
+player.userData.paint = replacement.userData.paint;
+player.userData.wheels = replacement.userData.wheels;
+player.userData.body = replacement.userData.body;
+player.userData.bodyBaseY = replacement.userData.bodyBaseY;
+player.userData.modelStyle = replacement.userData.modelStyle;
+player.userData.collisionHalfWidth = replacement.userData.collisionHalfWidth;
+player.userData.collisionHalfLength = replacement.userData.collisionHalfLength;
+}
 if (player.userData.starterModel) {
 player.remove(player.userData.starterModel);
 player.userData.starterModel = null;
@@ -308,15 +371,20 @@ for (const child of player.userData.syntheticChildren || []) child.visible = tru
 if (carId === 'starter') {
 loadStarterModel()
 .then((source) => {
-if (selectedCar !== 'starter') return;
+if (selectedCar === carId) {
 const model = prepareStarterModel(source);
 player.userData.starterModel = model;
 player.add(model);
 for (const child of player.userData.syntheticChildren || []) child.visible = false;
+}
+finishLoadingScreen();
 })
 .catch((err) => {
 console.error('Could not load 2023_lexus_ls_500h.glb:', err);
+finishLoadingScreen();
 });
+} else {
+finishLoadingScreen();
 }
 }
 function createEnvironment() {
@@ -375,7 +443,7 @@ if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z -
 const oncoming = roadMode === 'two-way' && lane < 0;
 const botSpeed = 60 + Math.random() * 100;
 const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
-const car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.random() < 0.25 ? 1 : 0);
+const car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
 car.position.set(lane, 0, z);
 if (oncoming) car.rotation.y = Math.PI;
 if (night) {
@@ -617,7 +685,7 @@ steerVelocity = THREE.MathUtils.damp(steerVelocity, steer * spec.handling * (dri
 player.position.x = THREE.MathUtils.clamp(player.position.x + steerVelocity * dt, -8, 8);
 player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -steerVelocity * 0.022 * (drifting ? 0.7 : 1), 7, dt);
 player.rotation.y = THREE.MathUtils.damp(player.rotation.y, -steer * (drifting ? 0.1 : 0.04), 7, dt);
-player.userData.body.position.y = 0.64 + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
+player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
 function updateTraffic(dt, previousPlayer) {
