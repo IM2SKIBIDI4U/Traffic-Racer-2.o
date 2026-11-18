@@ -395,9 +395,33 @@ function prepareTrafficModel(source) {
 function loadTrafficModels() {
   gltfLoader.load(
     'https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb',
-    (gltf) => {
+    async (gltf) => {
       try {
         gltf.scene.updateMatrixWorld(true);
+
+        // Extract textures from KHR_materials_pbrSpecularGlossiness if GLTFLoader dropped them
+        const parser = gltf.parser;
+        const jsonMaterials = parser?.json?.materials || [];
+        const recoveredTextures = new Map();
+
+        await Promise.all(
+          jsonMaterials.map(async (matDef, matIndex) => {
+            const specGloss = matDef.extensions?.KHR_materials_pbrSpecularGlossiness;
+            const texIndex =
+              specGloss?.diffuseTexture?.index ??
+              matDef.pbrMetallicRoughness?.baseColorTexture?.index;
+
+            if (typeof texIndex === 'number') {
+              try {
+                const tex = await parser.getDependency('texture', texIndex);
+                if (tex) {
+                  tex.colorSpace = THREE.SRGBColorSpace;
+                  recoveredTextures.set(matDef.name || `mat_${matIndex}`, tex);
+                }
+              } catch (e) { /* skip unloadable texture */ }
+            }
+          })
+        );
 
         let container = gltf.scene;
         while (container.children.length === 1) {
@@ -425,20 +449,27 @@ function loadTrafficModels() {
               }
 
               const fixMaterial = (m) => {
-                if (!m) return new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 });
-                const tex = m.map || m.emissiveMap || null;
+                if (!m) return new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.45 });
+                const tex =
+                  m.map ||
+                  recoveredTextures.get(m.name) ||
+                  recoveredTextures.values().next().value ||
+                  null;
+
                 if (tex) tex.colorSpace = THREE.SRGBColorSpace;
 
+                // Check if GLTF JSON had a diffuseFactor color
+                const matDef = jsonMaterials.find((jm) => jm.name === m.name);
+                const diffFactor = matDef?.extensions?.KHR_materials_pbrSpecularGlossiness?.diffuseFactor;
                 const baseColor = tex
                   ? new THREE.Color(0xffffff)
-                  : (m.color ? m.color.clone() : new THREE.Color(0xcccccc));
+                  : diffFactor
+                    ? new THREE.Color(diffFactor[0], diffFactor[1], diffFactor[2])
+                    : (m.color ? m.color.clone() : new THREE.Color(0xcccccc));
 
                 return new THREE.MeshStandardMaterial({
                   map: tex,
                   color: baseColor,
-                  normalMap: m.normalMap || null,
-                  roughnessMap: m.roughnessMap || null,
-                  metalnessMap: m.metalnessMap || null,
                   roughness: 0.45,
                   metalness: 0.2,
                   transparent: Boolean(m.transparent),
@@ -528,56 +559,6 @@ function loadTrafficModels() {
       finishLoadingScreen();
     }
   );
-}
-function applyPlayerCar(carId) {
-if (!player) return;
-const spec = cars.find((car) => car.id === carId) || cars[0];
-if (player.userData.modelStyle !== spec.modelStyle) {
-for (const child of player.userData.syntheticChildren || []) {
-player.remove(child);
-child.traverse((object) => {
-object.geometry?.dispose();
-for (const item of Array.isArray(object.material) ? object.material : [object.material]) item?.dispose();
-});
-}
-const replacement = createCar(spec.color, true, spec.modelStyle);
-const children = [...replacement.children];
-for (const child of children) {
-replacement.remove(child);
-player.add(child);
-}
-player.userData.syntheticChildren = children;
-player.userData.paint = replacement.userData.paint;
-player.userData.wheels = replacement.userData.wheels;
-player.userData.body = replacement.userData.body;
-player.userData.bodyBaseY = replacement.userData.bodyBaseY;
-player.userData.modelStyle = replacement.userData.modelStyle;
-player.userData.collisionHalfWidth = replacement.userData.collisionHalfWidth;
-player.userData.collisionHalfLength = replacement.userData.collisionHalfLength;
-}
-if (player.userData.starterModel) {
-player.remove(player.userData.starterModel);
-player.userData.starterModel = null;
-}
-for (const child of player.userData.syntheticChildren || []) child.visible = true;
-if (carId === 'starter') {
-loadStarterModel()
-.then((source) => {
-if (selectedCar === carId) {
-const model = prepareStarterModel(source);
-player.userData.starterModel = model;
-player.add(model);
-for (const child of player.userData.syntheticChildren || []) child.visible = false;
-}
-starterLoadFinished = true;
-finishLoadingScreen();
-})
-.catch((err) => {
-console.error('Could not load 2023_lexus_ls_500h.glb:', err);
-starterLoadFinished = true;
-finishLoadingScreen();
-});
-}
 }
 function createEnvironment() {
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
