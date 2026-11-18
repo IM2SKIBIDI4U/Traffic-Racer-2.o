@@ -575,7 +575,14 @@ light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
 car.add(light);
 }
 scene.add(car);
-traffic.push({ mesh: car, lane, oncoming, botSpeed, checkedMiss: false, previousZ: z });
+if (traffic.length === 0) {
+  const b = new THREE.Box3().setFromObject(car);
+  console.log('First spawned car:', {
+    pos: car.position.toArray(),
+    min: b.min.toArray(),
+    max: b.max.toArray(),
+    meshes: car.getObjectsByProperty('isMesh', true).length
+  });
 }
 function clearTraffic() {
 for (const item of traffic) scene.remove(item.mesh);
