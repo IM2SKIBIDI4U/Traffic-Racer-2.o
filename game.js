@@ -255,7 +255,6 @@ let starterModelPromise;
 function loadStarterModel() {
   if (!starterModelPromise) {
     starterModelPromise = new Promise((resolve, reject) => {
-Use code with caution.
 gltfLoader.load('./2023_lexus_ls_500h.glb', (gltf) => resolve(gltf.scene), undefined, reject);
 });
 }
