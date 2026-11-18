@@ -386,140 +386,156 @@ function prepareTrafficModel(source) {
   return model;
 }
 function loadTrafficModels() {
-  gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
-    try {
-      gltf.scene.updateMatrixWorld(true);
+  gltfLoader.load(
+    'https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb',
+    (gltf) => {
+      try {
+        gltf.scene.updateMatrixWorld(true);
 
-      let container = gltf.scene;
-      while (container.children.length === 1) {
-        container = container.children[0];
-      }
-
-    const tireMat = new THREE.MeshStandardMaterial({ color: 0x1b1e23, roughness: 0.85, metalness: 0.1 });
-const glassMat = new THREE.MeshStandardMaterial({ color: 0x101820, roughness: 0.15, metalness: 0.8 });
-
-// Inside object.traverse((child) => { ... })
-if (child.isMesh && child.geometry) {
-  const posAttr = child.geometry.attributes.position;
-  if (!posAttr || posAttr.count === 0) return;
-  hasMesh = true;
-  totalVertices += posAttr.count;
-  child.frustumCulled = false;
-  child.visible = true;
-  child.castShadow = false;
-  child.receiveShadow = false;
-
-  if (child.geometry.attributes.color) {
-    child.geometry.deleteAttribute('color');
-  }
-
-  const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
-  const partName = `${child.name} ${oldMat?.name || ''}`.toLowerCase();
-
-  if (oldMat?.map) {
-    oldMat.map.colorSpace = THREE.SRGBColorSpace;
-    child.material = new THREE.MeshStandardMaterial({
-      map: oldMat.map,
-      color: 0xffffff,
-      roughness: 0.4,
-      metalness: 0.25
-    });
-  } else if (/wheel|tire|tyre|rim|exhaust|grille|under/.test(partName)) {
-    child.material = tireMat;
-  } else if (/glass|window|windshield/.test(partName) || oldMat?.transparent) {
-    child.material = glassMat;
-  } else {
-    child.material = sharedMaterials[index % sharedMaterials.length];
-  }
-}
-
-      container.children.forEach((object, index) => {
-        const lowerName = (object.name || '').toLowerCase();
-        if (/plane|ground|floor|road|light|camera|backdrop|grid/.test(lowerName)) return;
-
-        let hasMesh = false;
-        object.traverse((child) => {
-          if (child.isMesh) {
-            hasMesh = true;
-            child.frustumCulled = false;
-            child.visible = true;
-            // Disable shadow casting on high-poly NPCs to fix FPS lag
-            child.castShadow = false;
-            child.receiveShadow = false;
-
-            if (child.geometry?.attributes.color) {
-              child.geometry.deleteAttribute('color');
-            }
-            const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
-            if (oldMat?.map) {
-              child.material = new THREE.MeshStandardMaterial({
-                map: oldMat.map,
-                roughness: 0.45,
-                metalness: 0.2
-              });
-            } else {
-              child.material = sharedMaterials[index % sharedMaterials.length];
-            }
-          }
-        });
-        if (!hasMesh) return;
-
-        const raw = object.clone(true);
-        raw.position.set(0, 0, 0);
-        raw.updateMatrixWorld(true);
-
-        const rawBox = new THREE.Box3().setFromObject(raw);
-        const rawSize = rawBox.getSize(new THREE.Vector3());
-        if (rawSize.lengthSq() === 0) return;
-
-        const maxHorizontal = Math.max(rawSize.x, rawSize.z);
-        const scale = 4.5 / maxHorizontal;
-        raw.scale.multiplyScalar(scale);
-        raw.updateMatrixWorld(true);
-
-        const scaledBox = new THREE.Box3().setFromObject(raw);
-        const center = scaledBox.getCenter(new THREE.Vector3());
-        const size = scaledBox.getSize(new THREE.Vector3());
-        raw.position.set(-center.x, -scaledBox.min.y, -center.z);
-
-        const pivot = new THREE.Group();
-        pivot.add(raw);
-        if (size.x > size.z * 1.15) {
-          pivot.rotation.y = Math.PI / 2;
+        let container = gltf.scene;
+        while (container.children.length === 1) {
+          container = container.children[0];
         }
-        pivot.updateMatrixWorld(true);
 
-        const finalBox = new THREE.Box3().setFromObject(pivot);
-        const finalSize = finalBox.getSize(new THREE.Vector3());
+        const sharedMaterials = [
+          0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff
+        ].map((hex) => new THREE.MeshStandardMaterial({
+          color: hex,
+          roughness: 0.45,
+          metalness: 0.2
+        }));
 
-        // Skip flat/invisible objects (like ground planes or loose parts)
-        if (finalSize.y < 0.85 || finalSize.x < 1.1) return;
+        const tireMat = new THREE.MeshStandardMaterial({
+          color: 0x1b1e23,
+          roughness: 0.85,
+          metalness: 0.1
+        });
 
-        const wrapper = new THREE.Group();
-        wrapper.add(pivot);
-        wrapper.userData.wheels = getTrafficWheels(wrapper);
-        wrapper.userData.collisionHalfWidth = Math.min(1.15, Math.max(0.75, finalSize.x * 0.44));
-        wrapper.userData.collisionHalfLength = Math.min(2.6, Math.max(1.6, finalSize.z * 0.46));
+        const glassMat = new THREE.MeshStandardMaterial({
+          color: 0x101820,
+          roughness: 0.15,
+          metalness: 0.8
+        });
 
-        trafficVehicles.push(wrapper);
-      });
+        container.children.forEach((object, index) => {
+          const lowerName = (object.name || '').toLowerCase();
+          if (/plane|ground|floor|road|light|camera|backdrop|grid/.test(lowerName)) return;
 
-      console.log('Filtered traffic cars:', trafficVehicles.length);
-      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
-    } catch (error) {
-      trafficVehicles.length = 0;
-      console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+          let hasMesh = false;
+          let totalVertices = 0;
+
+          object.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+              const posAttr = child.geometry.attributes.position;
+              if (!posAttr || posAttr.count === 0) return;
+              hasMesh = true;
+              totalVertices += posAttr.count;
+              child.frustumCulled = false;
+              child.visible = true;
+              child.castShadow = false;
+              child.receiveShadow = false;
+
+              if (child.geometry.attributes.color) {
+                child.geometry.deleteAttribute('color');
+              }
+
+              const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
+              const partName = `${child.name} ${oldMat?.name || ''}`.toLowerCase();
+
+              if (oldMat?.map) {
+                oldMat.map.colorSpace = THREE.SRGBColorSpace;
+                child.material = new THREE.MeshStandardMaterial({
+                  map: oldMat.map,
+                  color: 0xffffff,
+                  roughness: 0.4,
+                  metalness: 0.25
+                });
+              } else if (/wheel|tire|tyre|rim|exhaust|grille|under/.test(partName)) {
+                child.material = tireMat;
+              } else if (/glass|window|windshield/.test(partName) || oldMat?.transparent) {
+                child.material = glassMat;
+              } else {
+                child.material = sharedMaterials[index % sharedMaterials.length];
+              }
+            }
+          });
+
+          if (!hasMesh || totalVertices > 90000) return;
+
+          const raw = object.clone(true);
+          raw.position.set(0, 0, 0);
+          raw.updateMatrixWorld(true);
+
+          const rawBox = new THREE.Box3();
+          raw.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+              child.geometry.computeBoundingBox();
+              const b = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+              rawBox.union(b);
+            }
+          });
+
+          const rawSize = rawBox.getSize(new THREE.Vector3());
+          if (rawBox.isEmpty() || rawSize.lengthSq() === 0) return;
+
+          const maxHorizontal = Math.max(rawSize.x, rawSize.z);
+          const scale = 4.5 / maxHorizontal;
+          raw.scale.multiplyScalar(scale);
+          raw.updateMatrixWorld(true);
+
+          const scaledBox = new THREE.Box3();
+          raw.traverse((child) => {
+            if (child.isMesh && child.geometry) {
+              const b = child.geometry.boundingBox.clone().applyMatrix4(child.matrixWorld);
+              scaledBox.union(b);
+            }
+          });
+
+          const center = scaledBox.getCenter(new THREE.Vector3());
+          const size = scaledBox.getSize(new THREE.Vector3());
+          raw.position.set(-center.x, -scaledBox.min.y, -center.z);
+
+          const pivot = new THREE.Group();
+          pivot.add(raw);
+          if (size.x > size.z * 1.15) {
+            pivot.rotation.y = Math.PI / 2;
+          }
+          pivot.updateMatrixWorld(true);
+
+          const finalBox = new THREE.Box3().setFromObject(pivot);
+          const finalSize = finalBox.getSize(new THREE.Vector3());
+
+          if (finalSize.y < 0.9 || finalSize.x < 1.2 || finalSize.z < 2.2) return;
+
+          const wrapper = new THREE.Group();
+          wrapper.name = object.name || `vehicle_${index}`;
+          wrapper.add(pivot);
+          wrapper.userData.wheels = getTrafficWheels(wrapper);
+          wrapper.userData.collisionHalfWidth = Math.min(1.05, Math.max(0.75, finalSize.x * 0.42));
+          wrapper.userData.collisionHalfLength = Math.min(2.4, Math.max(1.6, finalSize.z * 0.44));
+
+          trafficVehicles.push(wrapper);
+        });
+
+        console.log('Loaded traffic vehicles:', trafficVehicles.length);
+        if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
+      } catch (error) {
+        trafficVehicles.length = 0;
+        console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+        $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+      } finally {
+        trafficLoadFinished = true;
+        finishLoadingScreen();
+      }
+    },
+    (event) => updateLoadingScreen(event, 'traffic models'),
+    (error) => {
+      console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-    } finally {
       trafficLoadFinished = true;
       finishLoadingScreen();
     }
-  }, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
-    console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
-    $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-    trafficLoadFinished = true;
-    finishLoadingScreen();
-  });
+  );
 }
 function applyPlayerCar(carId) {
 if (!player) return;
