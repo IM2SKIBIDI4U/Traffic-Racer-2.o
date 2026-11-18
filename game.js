@@ -247,7 +247,7 @@ function createPlayer() {
 
 const gltfLoader = new GLTFLoader();
 const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath('https://gstatic.com');
+dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
 gltfLoader.setDRACOLoader(dracoLoader);
 
 let starterModelPromise;
@@ -404,10 +404,10 @@ button.className = 'car-card' + (selectedCar === car.id ? ' selected' : '');
 button.style.setProperty('--car-color', '#' + car.color.toString(16).padStart(6, '0'));
 const state = isOwned ? (selectedCar === car.id ? 'SELECTED' : 'OWNED') : '◆ ' + car.cost.toLocaleString();
 button.innerHTML =
-'' +
-'' + car.name + '' +
-'' + state + '' +
-'' + car.maxSpeed + ' top · ' + car.acceleration + ' accel';
+'<span class="car-swatch"></span>' +
+'<span class="car-name">' + car.name + '</span>' +
+'<span class="car-cost ' + (isOwned ? 'owned' : '') + '">' + state + '</span>' +
+'<span class="car-cost">' + car.maxSpeed + ' top · ' + car.acceleration + ' accel</span>';
 button.addEventListener('click', () => {
 if (!isOwned && credits < car.cost) {
 button.querySelector('.car-cost').textContent = 'NEED ' + (car.cost - credits).toLocaleString() + ' MORE';
@@ -431,7 +431,7 @@ list.append(button);
 if (!list.querySelector('.sketchfab-link')) {
 const link = document.createElement('a');
 link.className = 'secondary-button sketchfab-link';
-link.href = 'sketchfab.com';
+link.href = 'https://sketchfab.com/search?features=downloadable&type=models&q=car';
 link.target = '_blank';
 link.rel = 'noopener noreferrer';
 link.textContent = 'Browse downloadable Sketchfab cars ↗';
@@ -439,61 +439,20 @@ list.append(link);
 }
 refreshWallet();
 }
-const $ = (id) => document.getElementById(id);
-
-// Show one overlay screen and hide all others
 function showPage(id) {
-  document.querySelectorAll('.overlay').forEach((page) => {
-    page.classList.add('hidden');
-  });
-  if (id && $(id)) {
-    $(id).classList.remove('hidden');
-  }
+document.querySelectorAll('.overlay').forEach((page) => page.classList.add('hidden'));
+if (id) $(id).classList.remove('hidden');
 }
-
-// Start Menu & Navigation Buttons
-$('menu-play')?.addEventListener('click', () => {
-  showPage(''); // Hides the menu to start driving
-  window.dispatchEvent(new Event('highway:start'));
-});
-
-$('garage-play')?.addEventListener('click', () => {
-  showPage('');
-  window.dispatchEvent(new Event('highway:start'));
-});
-
-$('retry-button')?.addEventListener('click', () => {
-  showPage('');
-  window.dispatchEvent(new Event('highway:start'));
-});
-
-$('menu-garage')?.addEventListener('click', () => {
-  showPage('garage-page');
-  window.dispatchEvent(new Event('highway:garage'));
-});
-
-$('menu-settings')?.addEventListener('click', () => {
-  showPage('settings-page');
-  window.dispatchEvent(new Event('highway:settings'));
-});
-
-$('pause-button')?.addEventListener('click', () => {
-  showPage('pause-page');
-  window.dispatchEvent(new Event('highway:pause'));
-});
-
-$('resume-button')?.addEventListener('click', () => {
-  showPage('');
-  window.dispatchEvent(new Event('highway:resume'));
-});
-
-document.querySelectorAll('.back-menu').forEach((button) => {
-  button.addEventListener('click', () => {
-    showPage('main-menu');
-    window.dispatchEvent(new Event('highway:menu'));
-  });
-});
-
+function showMenu() { running = false; paused = false; showPage('main-menu'); }
+function showGarage() { if (running) { running = false; paused = false; } renderGarage(); showPage('garage-page'); }
+function showSettings() { if (running) { running = false; paused = false; } syncSettings(); showPage('settings-page'); }
+function syncSettings() {
+const set = (id, label, active) => {
+const button = $(id);
+button.textContent = label;
+button.classList.toggle('active', active);
+button.setAttribute('aria-pressed', String(active));
+};
 set('auto-toggle', autoAccel ? 'ON' : 'OFF', autoAccel);
 set('road-mode-toggle', roadMode === 'one-way' ? 'ONE WAY' : 'TWO WAY', roadMode === 'two-way');
 set('night-toggle', night ? 'NIGHT' : 'DAY', night);
