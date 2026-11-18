@@ -619,6 +619,16 @@ function spawnTraffic() {
     car.add(light);
   }
   scene.add(car);
+  const debugBox = new THREE.Mesh(
+  new THREE.BoxGeometry(
+    (car.userData.collisionHalfWidth || 0.9) * 2,
+    1.6,
+    (car.userData.collisionHalfLength || 2.1) * 2
+  ),
+  new THREE.MeshBasicMaterial({ color: 0xff0000, wireframe: true })
+);
+debugBox.position.y = 0.8;
+car.add(debugBox);
   if (traffic.length === 0) {
     const b = new THREE.Box3().setFromObject(car);
     console.log('First spawned car:', {
