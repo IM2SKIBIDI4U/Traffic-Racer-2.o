@@ -737,6 +737,7 @@ $('road-mode-note').textContent = roadMode === 'one-way'
 }
 function startGame() {
 for (const key of Object.keys(keys)) keys[key] = false;
+if ($('game-over')) $('game-over').style.display = '';
 score = 0;
 actualSpeed = 0;
 steerVelocity = 0;
