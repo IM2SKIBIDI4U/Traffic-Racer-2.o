@@ -989,8 +989,8 @@ function updateTraffic(dt, previousPlayer) {
       dx < (player.userData.collisionHalfWidth || 1.05) + (item.mesh.userData.collisionHalfWidth || 1.05)
     ) {
       console.log('Hit vehicle:', item.mesh.name || 'unnamed', 'at', item.mesh.position.toArray());
-      running = false;
-      actualSpeed = 0;
+      // Let finishGame() perform the state transition. Setting running=false
+      // here first makes its guard return early and skips the crash screen.
       finishGame();
       return;
     }
