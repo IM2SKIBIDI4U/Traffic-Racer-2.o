@@ -388,16 +388,46 @@ function prepareTrafficModel(source) {
 function loadTrafficModels() {
   gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
     try {
-      gltf.scene.children.forEach((object) => {
-        if (object.isObject3D) {
-          trafficVehicles.push(prepareTrafficModel(object));
-        }
+      // Drill down through ANY single-child wrapper folders until we hit the list of cars
+      let container = gltf.scene;
+      while (container.children.length === 1) {
+        container = container.children[0];
+      }
+
+      console.log('Found container:', container.name, 'with', container.children.length, 'items');
+
+      container.children.forEach((object) => {
+        let hasMesh = false;
+        object.traverse((child) => {
+          if (child.isMesh) {
+            hasMesh = true;
+            // Fix invisible/see-through materials from KHR_materials_pbrSpecularGlossiness
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m) => {
+              if (m) {
+                m.transparent = false;
+                m.opacity = 1;
+                m.visible = true;
+                m.side = THREE.DoubleSide;
+                m.needsUpdate = true;
+              }
+            });
+          }
+        });
+        if (!hasMesh) return;
+
+        const wrapper = new THREE.Group();
+        const prepared = prepareTrafficModel(object);
+        wrapper.add(prepared);
+        wrapper.userData = { ...prepared.userData };
+        trafficVehicles.push(wrapper);
       });
+
+      console.log('Successfully loaded traffic cars:', trafficVehicles.length);
       if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
     } catch (error) {
       trafficVehicles.length = 0;
       console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
-      console.log('GLB structure:', gltf.scene.children.map(c => ({ name: c.name, kids: c.children.length })));
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
     } finally {
       trafficLoadFinished = true;
