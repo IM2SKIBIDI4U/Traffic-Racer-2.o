@@ -764,12 +764,10 @@ function finishGame() {
   nitroActive = false;
   cameraShake = 0.5;
 
-  // Mute engine sound
   if (audioContext && engineGain) {
     engineGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.05);
   }
 
-  // Trigger red crash flash
   const flash = $('crash-flash');
   if (flash) {
     flash.classList.remove('active');
@@ -777,19 +775,20 @@ function finishGame() {
     flash.classList.add('active');
   }
 
-  // Calculate & save earned credits
   const distanceMeters = Math.floor(score);
   const earned = Math.max(0, Math.floor(sessionCredits + distanceMeters / 25));
   credits += earned;
   save('tr-credits', credits);
   refreshWallet();
 
-  // Update the WIPEOUT end screen stats
   $('final-score').innerHTML = `${distanceMeters.toLocaleString()} <small>METERS</small>`;
   $('earned-credits').textContent = `+${earned.toLocaleString()} credits`;
 
-  // Show the Wipeout end screen
-  $('game-over').classList.remove('hidden');
+  const gameOverScreen = $('game-over');
+  if (gameOverScreen) {
+    gameOverScreen.classList.remove('hidden');
+    gameOverScreen.style.display = 'flex';
+  }
 }
 function initAudio() {
 if (!soundEnabled || audioContext) return;
