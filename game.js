@@ -400,16 +400,14 @@ function loadTrafficModels() {
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
     } finally {
       trafficLoadFinished = true;
-      finishInitialLoad(); // Make sure this matches your original cut-off line (e.g., finishLoading())
+      finishLoadingScreen();
     }
+  }, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
+    console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
+    $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+    trafficLoadFinished = true;
+    finishLoadingScreen();
   });
-}
-}, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
-console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
-$('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-trafficLoadFinished = true;
-finishLoadingScreen();
-});
 }
 function applyPlayerCar(carId) {
 if (!player) return;
