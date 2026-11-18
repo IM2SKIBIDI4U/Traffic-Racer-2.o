@@ -420,36 +420,17 @@ function loadTrafficModels() {
               child.castShadow = false;
               child.receiveShadow = false;
 
-              if (child.geometry.attributes.color) {
-                child.geometry.deleteAttribute('color');
+              // Keep the GLB exactly as authored: vertex colours, material colours,
+              // texture maps, roughness/metalness and all other material settings.
+              // GLTFLoader already creates the correct material types and settings.
+              const originalMaterials = Array.isArray(child.material)
+                ? child.material
+                : [child.material];
+              for (const originalMaterial of originalMaterials) {
+                if (!originalMaterial) continue;
+                if (originalMaterial.map) originalMaterial.map.colorSpace = THREE.SRGBColorSpace;
+                if (originalMaterial.emissiveMap) originalMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
               }
-
-              // Restore original texture maps, colors, and detail from the GLB
-              const restoreMaterial = (m) => {
-                if (!m) return new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.45 });
-                if (m.map) m.map.colorSpace = THREE.SRGBColorSpace;
-                if (m.emissiveMap) m.emissiveMap.colorSpace = THREE.SRGBColorSpace;
-
-                return new THREE.MeshStandardMaterial({
-                  map: m.map || null,
-                  color: m.color ? m.color.clone() : new THREE.Color(0xffffff),
-                  normalMap: m.normalMap || null,
-                  roughnessMap: m.roughnessMap || null,
-                  metalnessMap: m.metalnessMap || null,
-                  emissive: m.emissive ? m.emissive.clone() : new THREE.Color(0x000000),
-                  emissiveMap: m.emissiveMap || null,
-                  emissiveIntensity: m.emissiveIntensity || 1,
-                  roughness: typeof m.roughness === 'number' ? m.roughness : 0.45,
-                  metalness: typeof m.metalness === 'number' ? m.metalness : 0.2,
-                  transparent: Boolean(m.transparent),
-                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
-                  side: THREE.DoubleSide
-                });
-              };
-
-              child.material = Array.isArray(child.material)
-                ? child.material.map(restoreMaterial)
-                : restoreMaterial(child.material);
             }
           });
 
