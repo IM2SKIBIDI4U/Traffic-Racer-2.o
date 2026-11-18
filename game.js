@@ -348,6 +348,43 @@ if (object.children.length && (name.includes('teker') || name.startsWith('wheels
 });
 return wheels;
 }
+function prepareTrafficModel(source) {
+  const model = source.clone(true);
+  model.updateWorldMatrix(true, true);
+  let front;
+  let rear;
+  model.traverse((object) => {
+    const name = (object.name || '').toLowerCase();
+    if (!front && (name.startsWith('on_teker') || name === 'wheels_new_trucks_on')) front = object;
+    if (!rear && (name.startsWith('arka_teker') || name === 'wheels_new_trucks_arka1')) rear = object;
+  });
+  if (front && rear) {
+    const frontCenter = new THREE.Box3().setFromObject(front).getCenter(new THREE.Vector3());
+    const rearCenter = new THREE.Box3().setFromObject(rear).getCenter(new THREE.Vector3());
+    const direction = frontCenter.sub(rearCenter);
+    if (direction.lengthSq() > 0.001) model.rotation.y += Math.PI - Math.atan2(direction.x, direction.z);
+  }
+  model.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const length = Math.max(size.x, size.z);
+  if (!Number.isFinite(length) || length <= 0) throw new Error('Traffic vehicle model has no measurable dimensions');
+  model.scale.multiplyScalar(4.5 / length);
+  model.updateWorldMatrix(true, true);
+  const scaledBounds = new THREE.Box3().setFromObject(model);
+  const center = scaledBounds.getCenter(new THREE.Vector3());
+  const scaledSize = scaledBounds.getSize(new THREE.Vector3());
+  model.position.set(-center.x, -scaledBounds.min.y, -center.z);
+  model.traverse((object) => {
+    if (object.isMesh) {
+      object.castShadow = true;
+      object.receiveShadow = true;
+    }
+  });
+  model.userData.collisionHalfWidth = Math.max(0.8, scaledSize.x * 0.46);
+  model.userData.collisionHalfLength = scaledSize.z * 0.47;
+  return model;
+}
 function loadTrafficModels() {
   gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
     try {
