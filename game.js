@@ -44,6 +44,7 @@ const roads = [];
 const scenery = [];
 const grounds = [];
 const traffic = [];
+const trafficVehicles = [];
 const particles = [];
 const lanes = [-6.75, -2.25, 2.25, 6.75];
 const keys = { left: false, right: false, accelerate: false, brake: false, drift: false, nitro: false };
@@ -271,21 +272,23 @@ gltfLoader.setDRACOLoader(dracoLoader);
 
 let starterModelPromise;
 let startupLoadFinished = false;
+let starterLoadFinished = false;
+let trafficLoadFinished = false;
 
-function updateLoadingScreen(event) {
+function updateLoadingScreen(event, asset = 'vehicle model') {
 const progress = event.total ? Math.floor(event.loaded / event.total * 100) : null;
 const fill = $('loading-fill');
 if (progress !== null) {
 fill.style.width = progress + '%';
-$('loading-message').textContent = 'Loading vehicle model… ' + progress + '%';
+$('loading-message').textContent = 'Loading ' + asset + '… ' + progress + '%';
 $('loading-progress').setAttribute('aria-valuenow', String(progress));
 } else {
-$('loading-message').textContent = 'Loading vehicle model…';
+$('loading-message').textContent = 'Loading ' + asset + '…';
 }
 }
 
 function finishLoadingScreen() {
-if (startupLoadFinished) return;
+if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished) return;
 startupLoadFinished = true;
 $('loading-screen').classList.add('hidden');
 $('main-menu').classList.remove('hidden');
@@ -337,6 +340,73 @@ object.receiveShadow = true;
 });
 return model;
 }
+function getTrafficWheels(model) {
+const wheels = [];
+model.traverse((object) => {
+const name = (object.name || '').toLowerCase();
+if (object.children.length && (name.includes('teker') || name.startsWith('wheels_new_trucks_'))) wheels.push(object);
+});
+return wheels;
+}
+function prepareTrafficModel(source) {
+const model = source.clone(true);
+model.updateWorldMatrix(true, true);
+let front;
+let rear;
+model.traverse((object) => {
+const name = (object.name || '').toLowerCase();
+if (!front && (name.startsWith('on_teker') || name === 'wheels_new_trucks_on')) front = object;
+if (!rear && (name.startsWith('arka_teker') || name === 'wheels_new_trucks_arka1')) rear = object;
+});
+if (front && rear) {
+const frontCenter = new THREE.Box3().setFromObject(front).getCenter(new THREE.Vector3());
+const rearCenter = new THREE.Box3().setFromObject(rear).getCenter(new THREE.Vector3());
+const direction = frontCenter.sub(rearCenter);
+if (direction.lengthSq() > 0.001) model.rotation.y += Math.PI - Math.atan2(direction.x, direction.z);
+}
+model.updateWorldMatrix(true, true);
+const bounds = new THREE.Box3().setFromObject(model);
+const size = bounds.getSize(new THREE.Vector3());
+const length = Math.max(size.x, size.z);
+if (!Number.isFinite(length) || length <= 0) throw new Error('Traffic vehicle model has no measurable dimensions');
+model.scale.multiplyScalar(4.5 / length);
+model.updateWorldMatrix(true, true);
+const scaledBounds = new THREE.Box3().setFromObject(model);
+const center = scaledBounds.getCenter(new THREE.Vector3());
+const scaledSize = scaledBounds.getSize(new THREE.Vector3());
+model.position.set(-center.x, -scaledBounds.min.y, -center.z);
+model.traverse((object) => {
+if (object.isMesh) {
+object.castShadow = true;
+object.receiveShadow = true;
+}
+});
+model.userData.collisionHalfWidth = Math.max(0.8, scaledSize.x * 0.46);
+model.userData.collisionHalfLength = scaledSize.z * 0.47;
+return model;
+}
+function loadTrafficModels() {
+gltfLoader.load('./traffic_rider_npc_vehicles.glb', (gltf) => {
+try {
+gltf.scene.traverse((object) => {
+if (object.name.startsWith('AI_') && object.children.length) trafficVehicles.push(prepareTrafficModel(object));
+});
+if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
+} catch (error) {
+trafficVehicles.length = 0;
+console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
+$('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+} finally {
+trafficLoadFinished = true;
+finishLoadingScreen();
+}
+}, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
+console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
+$('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
+trafficLoadFinished = true;
+finishLoadingScreen();
+});
+}
 function applyPlayerCar(carId) {
 if (!player) return;
 const spec = cars.find((car) => car.id === carId) || cars[0];
@@ -377,13 +447,16 @@ player.userData.starterModel = model;
 player.add(model);
 for (const child of player.userData.syntheticChildren || []) child.visible = false;
 }
+starterLoadFinished = true;
 finishLoadingScreen();
 })
 .catch((err) => {
 console.error('Could not load 2023_lexus_ls_500h.glb:', err);
+starterLoadFinished = true;
 finishLoadingScreen();
 });
 } else {
+starterLoadFinished = true;
 finishLoadingScreen();
 }
 }
@@ -443,7 +516,16 @@ if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z -
 const oncoming = roadMode === 'two-way' && lane < 0;
 const botSpeed = 60 + Math.random() * 100;
 const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
-const car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
+let car;
+if (trafficVehicles.length) {
+const source = trafficVehicles[Math.floor(Math.random() * trafficVehicles.length)];
+car = source.clone(true);
+car.userData.wheels = getTrafficWheels(car);
+car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
+car.userData.collisionHalfLength = source.userData.collisionHalfLength;
+} else {
+car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
+}
 car.position.set(lane, 0, z);
 if (oncoming) car.rotation.y = Math.PI;
 if (night) {
@@ -545,6 +627,7 @@ nearMissChain = 0;
 sessionCredits = 0;
 player.position.set(lanes.at(2), 0, 7);
 player.rotation.set(0, 0, 0);
+updateCamera(0, 0);
 clearTraffic();
 for (const particle of particles) scene.remove(particle.mesh);
 particles.length = 0;
@@ -788,13 +871,19 @@ $('speed').textContent = Math.round(actualSpeed * 0.58).toString();
 $('nitro-fill').style.width = nitro + '%';
 $('nitro-label').textContent = nitroActive ? 'BOOST' : nitro > 99 ? 'READY' : 'CHARGING';
 const fast = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed), 0, 1);
-camera.fov = THREE.MathUtils.damp(camera.fov, 58 + fast * 12 + (nitroActive ? 3 : 0), 2, dt);
-camera.updateProjectionMatrix();
-camera.position.y = THREE.MathUtils.damp(camera.position.y, 5.5 - fast * 0.4, 2, dt);
-camera.position.x = THREE.MathUtils.damp(camera.position.x, player.position.x * 0.3, 2.4, dt) + (cameraShake ? (Math.random() - 0.5) * cameraShake : 0);
-camera.lookAt(player.position.x * 0.22, 1, -22 - fast * 6);
+updateCamera(dt, fast);
 $('speed-lines').style.opacity = String(fast * 0.55);
 updateAudio();
+}
+function updateCamera(dt, fast) {
+camera.fov = THREE.MathUtils.damp(camera.fov, 68 + fast * 8 + (nitroActive ? 2 : 0), 2, dt);
+camera.updateProjectionMatrix();
+const position = player.localToWorld(new THREE.Vector3(0, 1.35, 0.15));
+const target = player.localToWorld(new THREE.Vector3(0, 1.3, -35 - fast * 8));
+if (dt === 0) camera.position.copy(position);
+else camera.position.lerp(position, 1 - Math.exp(-8 * dt));
+if (cameraShake) camera.position.x += (Math.random() - 0.5) * cameraShake;
+camera.lookAt(target);
 }
 function resize() {
 const width = canvas.clientWidth || innerWidth;
@@ -885,6 +974,7 @@ else if (audioContext) engineGain.gain.setTargetAtTime(0, audioContext.currentTi
 });
 syncSettings();
 createEnvironment();
+loadTrafficModels();
 createPlayer();
 setNight(night);
 renderGarage();

@@ -1,4 +1,5 @@
-## Fixes and asset browsing
+# Highway Rush
 
-- Traffic now uses lane-based following gaps and swept collision checks, so AI cars should no longer overlap by passing through one another at higher speeds. Player collision detection also checks the movement path between frames.
-- The garage includes a link to the provided Sketchfab downloadable-car search. That URL is a search results page, not a particular model file; choose a specific model on Sketchfab and verify its license/attribution and download permissions before using it. No model was imported automatically because the search URL does not identify a downloadable asset.
+A 3D highway driving game with a first-person driving view. Traffic cars are randomized from `traffic_rider_npc_vehicles.glb`; the included Lexus model is used for the starter car.
+
+Controls: A/D or arrow keys to steer, W/Up to accelerate, S/Down to brake, Space to drift, Shift for nitro, and Esc to pause. On-screen controls are available on touch devices.
