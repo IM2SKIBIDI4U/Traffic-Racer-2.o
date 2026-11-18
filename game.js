@@ -388,30 +388,38 @@ function prepareTrafficModel(source) {
 function loadTrafficModels() {
   gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
     try {
-      // Drill down through ANY single-child wrapper folders until we hit the list of cars
+      gltf.scene.updateMatrixWorld(true);
+
       let container = gltf.scene;
       while (container.children.length === 1) {
         container = container.children[0];
       }
 
-      console.log('Found container:', container.name, 'with', container.children.length, 'items');
+      const fallbackColors = [0xd94336, 0x2b7de9, 0xe8b931, 0x389e64, 0xeeeeee, 0x555b66, 0x8a4fff];
 
-      container.children.forEach((object) => {
+      container.children.forEach((object, index) => {
         let hasMesh = false;
         object.traverse((child) => {
           if (child.isMesh) {
             hasMesh = true;
-            // Fix invisible/see-through materials from KHR_materials_pbrSpecularGlossiness
-            const mats = Array.isArray(child.material) ? child.material : [child.material];
-            mats.forEach((m) => {
-              if (m) {
-                m.transparent = false;
-                m.opacity = 1;
-                m.visible = true;
-                m.side = THREE.DoubleSide;
-                m.needsUpdate = true;
-              }
-            });
+            child.frustumCulled = false;
+            child.visible = true;
+
+            // Remove broken/black vertex color attributes if present
+            if (child.geometry && child.geometry.attributes.color) {
+              child.geometry.deleteAttribute('color');
+            }
+
+            // Replace unsupported KHR_materials_pbrSpecularGlossiness with clean StandardMaterial
+            const oldMats = Array.isArray(child.material) ? child.material : [child.material];
+            const newMats = oldMats.map((m) => new THREE.MeshStandardMaterial({
+              map: m?.map || null,
+              color: m?.map ? 0xffffff : (m?.color || fallbackColors[index % fallbackColors.length]),
+              roughness: 0.45,
+              metalness: 0.2,
+              side: THREE.DoubleSide
+            }));
+            child.material = Array.isArray(child.material) ? newMats : newMats[0];
           }
         });
         if (!hasMesh) return;
@@ -424,7 +432,7 @@ function loadTrafficModels() {
       });
 
       console.log('Successfully loaded traffic cars:', trafficVehicles.length);
-      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
+      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
     } catch (error) {
       trafficVehicles.length = 0;
       console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
