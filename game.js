@@ -351,46 +351,6 @@ return wheels;
 function loadTrafficModels() {
   gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
     try {
-      // Drill down if all 20 cars are inside one master container node
-      let container = gltf.scene;
-      while (container.children.length === 1 && container.children[0].children.length > 1) {
-        container = container.children[0];
-      }
-
-      container.children.forEach((object) => {
-        // Check if this object actually contains a 3D mesh (skips cameras/lights)
-        let hasMesh = false;
-        object.traverse((child) => { if (child.isMesh) hasMesh = true; });
-        if (!hasMesh) return;
-
-        // Wrap in a Group so prepareTrafficModel's position offset stays intact when driving
-        const wrapper = new THREE.Group();
-        const prepared = prepareTrafficModel(object);
-        wrapper.add(prepared);
-        wrapper.userData = { ...prepared.userData };
-        trafficVehicles.push(wrapper);
-      });
-
-      console.log('Loaded traffic cars:', trafficVehicles.length);
-      if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found in traffic_rider_npc_vehicles.glb');
-    } catch (error) {
-      trafficVehicles.length = 0;
-      console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
-      $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-    } finally {
-      trafficLoadFinished = true;
-      finishLoadingScreen();
-    }
-  }, (event) => updateLoadingScreen(event, 'traffic models'), (error) => {
-    console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
-    $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
-    trafficLoadFinished = true;
-    finishLoadingScreen();
-  });
-}
-function loadTrafficModels() {
-  gltfLoader.load('https://media.githubusercontent.com/media/im2skibidi4u/Traffic-Racer-2.o/main/traffic_rider_npc_vehicles.glb', (gltf) => {
-    try {
       gltf.scene.children.forEach((object) => {
         if (object.isObject3D) {
           trafficVehicles.push(prepareTrafficModel(object));
