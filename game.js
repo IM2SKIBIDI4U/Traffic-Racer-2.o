@@ -317,7 +317,7 @@ const rearCenter = rearBox.getCenter(new THREE.Vector3());
 const frontDirection = frontCenter.sub(rearCenter);
 if (frontDirection.lengthSq() > 0.001) {
 const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
-model.rotation.y -= currentAngle;
+model.rotation.y += Math.PI - currentAngle;
 }
 }
 model.updateWorldMatrix(true, true);
