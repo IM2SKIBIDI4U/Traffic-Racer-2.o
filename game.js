@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game-canvas');
@@ -64,9 +65,13 @@ function save(key, value) {
   try { localStorage.setItem(key, String(value)); } catch { /* Storage may be disabled. */ }
 }
 
-let credits = Math.max(0, Number(load('tr-credits', '0')) || 0);
+const storedCredits = Number(load('tr-credits', '0'));
+let credits = Number.isFinite(storedCredits) ? Math.max(0, Math.floor(storedCredits)) : 0;
 let owned;
-try { owned = new Set(JSON.parse(load('tr-owned', '["starter"]'))); } catch { owned = new Set(['starter']); }
+try {
+  const storedOwned = JSON.parse(load('tr-owned', '["starter"]'));
+  owned = new Set(Array.isArray(storedOwned) ? storedOwned.filter((id) => cars.some((car) => car.id === id)) : []);
+} catch { owned = new Set(); }
 owned.add('starter');
 let selectedCar = load('tr-car', 'starter');
 if (!owned.has(selectedCar) || !cars.some((car) => car.id === selectedCar)) selectedCar = 'starter';
@@ -93,7 +98,6 @@ let engineOscillator;
 let engineGain;
 let engineFilter;
 let nearMissChain = 0;
-let sessionCredits = 0;
 
 const material = (color, roughness = 0.65, metalness = 0.05, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
@@ -748,7 +752,6 @@ burstTimer = 0;
 burstCooldown = 8 + Math.random() * 7;
 cameraShake = 0;
 nearMissChain = 0;
-sessionCredits = 0;
 player.position.set(lanes.at(2), 0, 7);
 player.rotation.set(0, 0, 0);
 updateCamera(0, 0);
@@ -771,7 +774,6 @@ function awardCredits(amount) {
 const reward = Math.max(0, Math.floor(amount));
 if (!reward) return;
 credits += reward;
-sessionCredits += reward;
 save('tr-credits', credits);
 refreshWallet();
 }
@@ -809,8 +811,9 @@ function finishGame() {
     }
 
     const distanceMeters = Math.floor(score || 0);
-    const bonus = typeof sessionCredits === 'number' ? sessionCredits : 0;
-    const earned = Math.max(0, Math.floor(bonus + distanceMeters / 25));
+    // Near-miss rewards are credited immediately by awardCredits().
+    // Only add the distance bonus here so near misses are not paid twice.
+    const earned = Math.max(0, Math.floor(distanceMeters / 25));
     credits = (credits || 0) + earned;
     save('tr-credits', credits);
     if (typeof refreshWallet === 'function') refreshWallet();
@@ -961,12 +964,12 @@ function updateTraffic(dt, previousPlayer) {
     laneGroups.get(item.lane).push(item);
   }
   for (const group of laneGroups.values()) {
-    group.sort((a, b) => oldPositions.get(a) - oldPositions.get(b));
+    group.sort((a, b) => oldPositions.get(b) - oldPositions.get(a));
     for (let index = 1; index < group.length; index++) {
       const leader = group[index - 1];
       const follower = group[index];
       const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
-      follower.mesh.position.z = Math.max(follower.mesh.position.z, leader.mesh.position.z + safeGap);
+      follower.mesh.position.z = Math.min(follower.mesh.position.z, leader.mesh.position.z - safeGap);
     }
   }
 
@@ -1037,7 +1040,7 @@ updatePlayer(dt);
 updateTraffic(dt, previousPlayer);
 score += actualSpeed / 3.6 * dt;
 $('score').textContent = Math.floor(score).toLocaleString();
-$('speed').textContent = Math.round(actualSpeed * 0.58).toString();
+$('speed').textContent = Math.round(actualSpeed).toString();
 $('nitro-fill').style.width = nitro + '%';
 $('nitro-label').textContent = nitroActive ? 'BOOST' : nitro > 99 ? 'READY' : 'CHARGING';
 const fast = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed), 0, 1);
@@ -1071,8 +1074,10 @@ function setControl(name, value) { keys[name] = value; }
 function togglePause() {
 if (!running) return;
 paused = !paused;
-if (paused) showPage('pause-page');
-else showPage('');
+if (paused) {
+  Object.keys(keys).forEach((key) => { keys[key] = false; });
+  showPage('pause-page');
+} else showPage('');
 }
 window.addEventListener('keydown', (event) => {
 const key = event.key.toLowerCase();
