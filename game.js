@@ -504,7 +504,9 @@ function loadTrafficModels() {
           wrapper.userData.collisionHalfWidth = Math.min(1.12, Math.max(0.58, finalSize.x * 0.47));
           wrapper.userData.collisionHalfLength = Math.min(3.15, Math.max(1.25, finalSize.z * 0.46));
 
-
+          // Register each prepared GLB vehicle so spawnTraffic() clones these
+          // detailed models instead of falling back to the old procedural cars.
+          trafficVehicles.push(wrapper);
         });
 
         if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
@@ -718,10 +720,25 @@ list.append(link);
 refreshWallet();
 }
 function showPage(id) {
-document.querySelectorAll('.overlay').forEach((page) => page.classList.add('hidden'));
+document.querySelectorAll('.overlay').forEach((page) => {
+  page.classList.add('hidden');
+  // Clear inline styles left by older result-screen handling so the hidden
+  // class always controls visibility when changing pages.
+  page.style.removeProperty('display');
+  page.style.removeProperty('opacity');
+  page.style.removeProperty('pointer-events');
+  page.style.removeProperty('z-index');
+});
 if (id) $(id).classList.remove('hidden');
 }
-function showMenu() { running = false; paused = false; showPage('main-menu'); }
+function showMenu() {
+  running = false;
+  paused = false;
+  actualSpeed = 0;
+  nitroActive = false;
+  Object.keys(keys).forEach((key) => { keys[key] = false; });
+  showPage('main-menu');
+}
 function showGarage() { if (running) { running = false; paused = false; } renderGarage(); showPage('garage-page'); }
 function showSettings() { if (running) { running = false; paused = false; } syncSettings(); showPage('settings-page'); }
 function syncSettings() {
@@ -828,16 +845,9 @@ function finishGame() {
     console.error('Error updating end screen stats:', e);
   }
 
-  // Hide any other open overlays and force #game-over visible on top
-  document.querySelectorAll('.overlay').forEach((el) => el.classList.add('hidden'));
-  const gameOverScreen = $('game-over');
-  if (gameOverScreen) {
-    gameOverScreen.classList.remove('hidden');
-    gameOverScreen.style.display = 'flex';
-    gameOverScreen.style.opacity = '1';
-    gameOverScreen.style.pointerEvents = 'auto';
-    gameOverScreen.style.zIndex = '999';
-  }
+  // Use the same overlay visibility rules as every other screen. Avoid
+  // inline display styles, which can override .overlay.hidden on Main Menu.
+  showPage('game-over');
 }
 function initAudio() {
 if (!soundEnabled || audioContext) return;
