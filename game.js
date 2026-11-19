@@ -1484,55 +1484,77 @@ function clearPoliceChase() {
   policeChasers.length=0;policeCatchTime=0;escapeProgress=0;arrests=0;
 }
 function spawnPoliceChaser(offset=0) {
-  const car=createCar(0x172b46,false,2);car.name='police_pursuit_unit';addPoliceLightbar(car);scene.add(car);
-  const lateral=THREE.MathUtils.clamp(playerLateral+offset,-6.8,6.8),pathZ=30+policeChasers.length*5;
-  placeOnRoad(car,lateral,pathZ);policeChasers.push({mesh:car,pathZ,lateral,speed:160});
+  // Police appear ahead of the player, facing back toward them.
+  const car=createCar(0x172b46,false,2);
+  car.name='police_pursuit_unit';
+  addPoliceLightbar(car);
+  car.rotation.y=0;
+  scene.add(car);
+  const lateral=THREE.MathUtils.clamp(playerLateral+offset,-6.8,6.8);
+  const pathZ=-78-policeChasers.length*24;
+  placeOnRoad(car,lateral,pathZ,0);
+  policeChasers.push({mesh:car,pathZ,lateral,speed:160,offset});
 }
 function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
-    while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.6:1.6);
-    const playerMps=actualSpeed/3.6*2;let closest=Infinity;let closeBehind=false;
+    while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.5:1.5);
+    const playerMps=actualSpeed/3.6*2;
+    let closest=Infinity;
+    let policeNear=false;
     for(const unit of policeChasers) {
       const phase=Math.floor(performance.now()/170)%2;
-      if(unit.mesh.userData.policeLightParts){unit.mesh.userData.policeLightParts[0].visible=phase===0;unit.mesh.userData.policeLightParts[1].visible=phase===1;}
+      if(unit.mesh.userData.policeLightParts){
+        unit.mesh.userData.policeLightParts[0].visible=phase===0;
+        unit.mesh.userData.policeLightParts[1].visible=phase===1;
+      }
       const policeMaxSpeed=Math.min(200,160+Math.floor(score/1500)*5);
       const desired=Math.min(policeMaxSpeed,Math.max(120,actualSpeed+12));
       unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
-      unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
-      unit.lateral=THREE.MathUtils.damp(unit.lateral,THREE.MathUtils.clamp(playerLateral+(unit.lateral<playerLateral?-1.6:1.6),-7,7),0.65,dt);
-      if(unit.pathZ>76)unit.pathZ=54+Math.random()*8;
-      placeOnRoad(unit.mesh,unit.lateral,unit.pathZ);
-      // A physical bump from a pursuit car costs one life, with the same
-      // short damage cooldown used for ordinary traffic collisions.
+      const previousGap=unit.pathZ-7;
+      // They drive toward the player in the opposite direction and actively
+      // steer toward the player's lane to attempt an interception.
+      unit.pathZ+=(playerMps+unit.speed/3.6*2)*dt;
+      const interceptLane=THREE.MathUtils.clamp(playerLateral+unit.offset,-7,7);
+      unit.lateral=THREE.MathUtils.damp(unit.lateral,interceptLane,1.8,dt);
+      placeOnRoad(unit.mesh,unit.lateral,unit.pathZ,0);
       const policeGap=unit.pathZ-7;
-      if(Math.abs(policeGap)<4.2 && Math.abs(unit.lateral-playerLateral)<2.35 && hitCooldown<=0) {
+      const crossedPlayer=previousGap<0&&policeGap>=0;
+      const closeEnough=Math.abs(policeGap)<5.8 || crossedPlayer&&Math.abs(policeGap)<9;
+      if(closeEnough && Math.abs(unit.lateral-playerLateral)<2.65 && hitCooldown<=0) {
         hitCooldown=1.25;
         runHealth=Math.max(0,runHealth-1);
         $('health-value').textContent=String(runHealth);
         $('health-bar').style.width=(runHealth/3*100)+'%';
         addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
-        unit.pathZ+=8;
+        unit.pathZ=-105-Math.random()*25;
+        unit.lateral=THREE.MathUtils.clamp(playerLateral+(Math.random()<0.5?-2.2:2.2),-6.8,6.8);
         const warning=$('damage-warning');
         warning.classList.add('show');
         window.clearTimeout(updatePoliceChase.damageTimeout);
         updatePoliceChase.damageTimeout=window.setTimeout(()=>warning.classList.remove('show'),700);
         if(runHealth<=0){$('game-over-title').textContent='BUSTED!';finishGame();return;}
+      } else if(unit.pathZ>28) {
+        // After an attempted pass, circle back and set up another interception.
+        unit.pathZ=-105-Math.random()*25;
+        unit.lateral=THREE.MathUtils.clamp(playerLateral+unit.offset,-6.8,6.8);
       }
-      const gap=unit.pathZ-7;closest=Math.min(closest,Math.abs(gap));
-      if(gap<8&&gap>-1&&Math.abs(unit.lateral-playerLateral)<2.3)closeBehind=true;
+      const gap=Math.abs(unit.pathZ-7);
+      closest=Math.min(closest,gap);
+      if(gap<42)policeNear=true;
     }
-    if(closeBehind)policeCatchTime+=dt;
     if(closest>38)escapeProgress+=actualSpeed/3.6*dt;
     else escapeProgress=Math.max(0,escapeProgress-dt*12);
-    policeCatchTime=Math.max(0,policeCatchTime-dt*0.45);
     const label=$('chase-status');
-    if(label)label.textContent=policeCatchTime>0.2?'POLICE CLOSING · '+Math.min(100,Math.round(policeCatchTime/3*100))+'%':'ESCAPE DISTANCE · '+Math.floor(escapeProgress)+' M';
-    if(policeCatchTime>=3){$('game-over-title').textContent='CAUGHT!';finishGame();return;}
+    if(label)label.textContent=policeNear?'POLICE INTERCEPTING · ESCAPE!':'ESCAPE DISTANCE · '+Math.floor(escapeProgress)+' M';
     if(escapeProgress>=1000){$('game-over-title').textContent='YOU ESCAPED!';finishGame();}
   } else {
     const label=$('chase-status');if(label)label.textContent='VEHICLES STOPPED · '+arrests+'/5';
-    if(player.userData.policeLightParts){const phase=Math.floor(performance.now()/170)%2;player.userData.policeLightParts[0].visible=phase===0;player.userData.policeLightParts[1].visible=phase===1;}
+    if(player.userData.policeLightParts){
+      const phase=Math.floor(performance.now()/170)%2;
+      player.userData.policeLightParts[0].visible=phase===0;
+      player.userData.policeLightParts[1].visible=phase===1;
+    }
   }
 }
 function updateVehicleSignals(vehicle, direction, time) {
