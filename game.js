@@ -118,6 +118,16 @@ let lastAchievementScore = 0;
 let dailyDate = new Date().toISOString().slice(0,10);
 let dailyProgress = 0;
 let dailyClaimed = load('tr-daily-claimed','') === dailyDate;
+function refreshDailyDate() {
+  const today = new Date().toISOString().slice(0,10);
+  if (today !== dailyDate) {
+    dailyDate = today;
+    dailyClaimed = load('tr-daily-claimed','') === dailyDate;
+    dailyProgress = 0;
+    save('tr-daily-progress','0');
+    save('tr-daily-progress-date',dailyDate);
+  }
+}
 let unlockedAchievements;
 try { unlockedAchievements = new Set(JSON.parse(load('tr-achievements','[]'))); } catch { unlockedAchievements = new Set(); }
 const locationThemes = [
@@ -344,6 +354,8 @@ function createPlayer() {
   scene.add(player);
   player.userData.syntheticChildren = [...player.children];
   applyPlayerCar(selectedCar);
+  const savedPaint=Number(load('tr-custom-paint','0'));
+  if(Number.isFinite(savedPaint) && savedPaint>0 && player.userData.paint) player.userData.paint.color.setHex(savedPaint);
   const lamp = new THREE.SpotLight(0xe5f5ff, 0, 55, Math.PI / 7, 0.55, 1.5);
   lamp.position.set(0, 1.5, 2.1);
   lamp.target.position.set(0, 0, -32);
@@ -952,6 +964,7 @@ for (const item of traffic) scene.remove(item.mesh);
 traffic.length = 0;
 }
 function refreshWallet() {
+refreshDailyDate();
 for (const id of ['wallet', 'menu-wallet', 'garage-wallet']) {
 $(id).textContent = credits.toLocaleString();
 }
@@ -987,8 +1000,9 @@ save('tr-owned', JSON.stringify([...owned]));
 }
 selectedCar = car.id;
 save('tr-car', selectedCar);
-player.userData.paint.color.setHex(car.color);
 applyPlayerCar(selectedCar);
+const customPaint=Number(load('tr-custom-paint','0'));
+if(player.userData.paint) player.userData.paint.color.setHex(customPaint>0?customPaint:car.color);
 refreshWallet();
 renderGarage();
 });
@@ -1015,7 +1029,12 @@ const paintPanel=document.createElement('div'); paintPanel.className='paint-pane
 paintPanel.innerHTML='<h3>PAINT SHOP</h3>';
 for(const color of [0x1678c8,0xd54b3e,0x32a879,0xe9a33b,0xe8e8e8,0x252a32,0x8c65bd]){
   const swatch=document.createElement('button');swatch.className='paint-swatch';swatch.style.background='#'+color.toString(16).padStart(6,'0');swatch.setAttribute('aria-label','Choose paint');
-  swatch.addEventListener('click',()=>{player.userData.paint.color.setHex(color);save('tr-custom-paint',String(color));});
+  swatch.addEventListener('click',()=>{
+    if(player?.userData.paint) player.userData.paint.color.setHex(color);
+    save('tr-custom-paint',String(color));
+    for(const button of paintPanel.querySelectorAll('.paint-swatch')) button.style.outline='none';
+    swatch.style.outline='2px solid #ffffff';
+  });
   paintPanel.append(swatch);
 }
 list.append(paintPanel);
@@ -1043,6 +1062,7 @@ document.querySelectorAll('.overlay').forEach((page) => {
 if (id) $(id).classList.remove('hidden');
 }
 function showMenu() {
+  refreshDailyDate();
   running = false;
   paused = false;
   actualSpeed = 0;
@@ -1068,6 +1088,7 @@ $('road-mode-note').textContent = roadMode === 'one-way'
 : 'Two lanes each way with a double-yellow divider.';
 }
 function startGame() {
+refreshDailyDate();
 for (const key of Object.keys(keys)) keys[key] = false;
 if ($('game-over')) $('game-over').style.display = '';
 score = 0;
@@ -1120,7 +1141,7 @@ nearMissChain = Math.min(nearMissChain + 1, 4);
 const reward = 5 + (nearMissChain - 1) * 2;
 awardCredits(reward);
 const toast = $('near-miss');
-unlockAchievement('close-call','CLOSE CALL');
+unlockAchievement('close-call','CLOSE CALL',25);
 toast.innerHTML = 'NEAR MISS! +' + reward + '';
 toast.classList.add('show');
 window.clearTimeout(showNearMiss.timeout);
@@ -1220,6 +1241,8 @@ hemi.intensity = night ? 0.45 : 1.45;
 sun.intensity = night ? 0.18 : 2.2;
 sun.color.set(night ? 0x9ab8ff : 0xffe6c6);
 if (player?.userData.headlamp) player.userData.headlamp.intensity = night ? 2.8 : 0;
+const fogRanges={clear:[140,340],rain:[105,245],fog:[38,155],snow:[75,205]}[weatherMode] || [140,340];
+scene.fog.near=fogRanges[0]; scene.fog.far=fogRanges[1];
 save('tr-night', night);
 syncSettings();
 }
@@ -1273,21 +1296,29 @@ function effectiveCarStats(spec) {
   };
 }
 function saveAchievements() { save('tr-achievements',JSON.stringify([...unlockedAchievements])); }
-function unlockAchievement(id,label) {
-  if(unlockedAchievements.has(id))return;
-  unlockedAchievements.add(id); saveAchievements();
-  const toast=$('achievement-toast'); toast.textContent='ACHIEVEMENT: '+label;
-  toast.classList.add('show'); window.clearTimeout(unlockAchievement.timeout);
-  unlockAchievement.timeout=window.setTimeout(()=>toast.classList.remove('show'),2200);
+function unlockAchievement(id,label,reward=0) {
+  if(unlockedAchievements.has(id)) return;
+  unlockedAchievements.add(id);
+  saveAchievements();
+  if(reward>0) awardCredits(reward);
+  const toast=$('achievement-toast');
+  if(toast) {
+    toast.textContent='ACHIEVEMENT: '+label+(reward>0?' · +'+reward+' CREDITS':'');
+    toast.classList.add('show');
+    window.clearTimeout(unlockAchievement.timeout);
+    unlockAchievement.timeout=window.setTimeout(()=>toast.classList.remove('show'),2400);
+  }
+  refreshWallet();
 }
 function updateProgression() {
+  refreshDailyDate();
   const meters=Math.floor(score);
-  if(meters>=1000)unlockAchievement('one-km','1 KM DRIVER');
-  if(meters>=5000)unlockAchievement('five-km','HIGHWAY REGULAR');
-  if(meters>=10000)unlockAchievement('ten-km','ROAD LEGEND');
+  if(meters>=1000)unlockAchievement('one-km','1 KM DRIVER',50);
+  if(meters>=5000)unlockAchievement('five-km','HIGHWAY REGULAR',150);
+  if(meters>=10000)unlockAchievement('ten-km','ROAD LEGEND',300);
   if(meters>=dailyProgress) { dailyProgress=meters; save('tr-daily-progress',String(dailyProgress)); save('tr-daily-progress-date',dailyDate); }
   const dailyLabel=$('daily-challenge-progress');
-  if(dailyLabel) dailyLabel.textContent=dailyClaimed?'COMPLETED · +100 CREDITS':'DRIVE 2,000 M IN ONE RUN · '+Math.min(2000,meters).toLocaleString()+'/2,000 M';
+  if(dailyLabel) dailyLabel.textContent=dailyClaimed?'DAILY CHALLENGE · COMPLETED (+100 CREDITS)':'DAILY CHALLENGE · DRIVE 2,000 M IN ONE RUN · '+Math.min(2000,meters).toLocaleString()+'/2,000 M';
   if(!dailyClaimed && meters>=2000) {
     dailyClaimed=true; save('tr-daily-claimed',dailyDate); awardCredits(100);
     const toast=$('achievement-toast'); toast.textContent='DAILY CHALLENGE COMPLETE: +100 CREDITS';
@@ -1599,7 +1630,6 @@ function updateTraffic(dt, previousPlayer) {
   }
 }
 function update(dt) {
-updateWeather(dt);
 for (let index = particles.length - 1; index >= 0; index--) {
 const p = particles[index];
 p.life -= dt;
@@ -1613,6 +1643,7 @@ particles.splice(index, 1);
 }
 }
 if (!running || paused) return;
+updateWeather(dt);
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const stats = effectiveCarStats(spec);
 const previousPlayer = { x: player.position.x, z: 7 };
@@ -1622,7 +1653,7 @@ else nitro = Math.min(100, nitro + dt * 8);
 const throttle = autoAccel || keys.accelerate;
 const maxSpeed = stats.maxSpeed + (nitroActive ? 45 : 0);
 if (keys.brake) actualSpeed = Math.max(0, actualSpeed - (stats.braking + actualSpeed * 0.12) * dt);
-else if (throttle) actualSpeed = Math.min(maxSpeed, actualSpeed + spec.acceleration * (nitroActive ? 1.55 : 1) * dt);
+else if (throttle) actualSpeed = Math.min(maxSpeed, actualSpeed + stats.acceleration * (nitroActive ? 1.55 : 1) * dt);
 else actualSpeed = Math.max(0, actualSpeed - (2 + actualSpeed * 0.018) * dt);
 if (Math.abs(player.position.x) > 7.5) actualSpeed = Math.max(0, actualSpeed - 20 * dt);
 if (nitroActive && Math.random() < dt * 12) {
