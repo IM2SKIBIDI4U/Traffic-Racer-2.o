@@ -150,19 +150,22 @@ function placeOnRoad(object, lateral, z, headingOffset = 0) {
 
 function createRoad(z, length = roadSegmentLength) {
   const group = new THREE.Group();
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(18, 0.22, length), roadMat);
+  // Compensate for the diagonal length of a curved segment so neighbouring
+  // pieces meet instead of leaving tiny gaps on the outside of bends.
+  const roadDepth = length / Math.max(0.75, Math.cos(roadHeading(z)));
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(18, 0.22, roadDepth), roadMat);
   slab.position.y = -0.02;
   slab.receiveShadow = true;
   group.add(slab);
   for (const x of [-9, 9]) {
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, length), whiteLine);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, roadDepth), whiteLine);
     edge.position.set(x, 0.105, 0);
     group.add(edge);
   }
   for (const x of [-4.5, 0, 4.5]) {
     if (roadMode === 'two-way' && x === 0) {
       for (const offset of [-0.12, 0.12]) {
-        const line = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, length), yellowLine);
+        const line = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, roadDepth), yellowLine);
         line.position.set(offset, 0.11, 0);
         group.add(line);
       }
@@ -175,11 +178,12 @@ function createRoad(z, length = roadSegmentLength) {
     }
   }
   for (const side of [-1, 1]) {
-    const shoulder = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, length), material(0x8c9290, 0.9));
+    const shoulder = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, roadDepth), material(0x8c9290, 0.9));
     shoulder.position.set(side * 10.5, -0.06, 0);
     group.add(shoulder);
   }
-  group.position.z = z;
+  group.userData.roadStation = z;
+  placeOnRoad(group, 0, z);
   scene.add(group);
   roads.push(group);
 }
