@@ -116,7 +116,7 @@ catch { upgradeLevels = {engine:0,handling:0,brakes:0}; }
 upgradeLevels = {engine:Math.min(5,Math.max(0,upgradeLevels.engine||0)),handling:Math.min(5,Math.max(0,upgradeLevels.handling||0)),brakes:Math.min(5,Math.max(0,upgradeLevels.brakes||0))};
 let lastAchievementScore = 0;
 let dailyDate = new Date().toISOString().slice(0,10);
-let dailyProgress = load('tr-daily-progress-date','') === dailyDate ? (Number(load('tr-daily-progress','0')) || 0) : 0;
+let dailyProgress = 0;
 let dailyClaimed = load('tr-daily-claimed','') === dailyDate;
 let unlockedAchievements;
 try { unlockedAchievements = new Set(JSON.parse(load('tr-achievements','[]'))); } catch { unlockedAchievements = new Set(); }
@@ -1071,6 +1071,7 @@ function startGame() {
 for (const key of Object.keys(keys)) keys[key] = false;
 if ($('game-over')) $('game-over').style.display = '';
 score = 0;
+dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',dailyDate);
 runHealth=3; hitCooldown=0;
 $('health-value').textContent='3'; $('health-bar').style.width='100%';
 actualSpeed = 0;
