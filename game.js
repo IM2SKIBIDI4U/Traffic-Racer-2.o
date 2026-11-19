@@ -560,6 +560,56 @@ function loadTrafficModels() {
     }
   );
 }
+function applyPlayerCar(carId) {
+if (!player) return;
+const spec = cars.find((car) => car.id === carId) || cars[0];
+if (player.userData.modelStyle !== spec.modelStyle) {
+for (const child of player.userData.syntheticChildren || []) {
+player.remove(child);
+child.traverse((object) => {
+object.geometry?.dispose();
+for (const item of Array.isArray(object.material) ? object.material : [object.material]) item?.dispose();
+});
+}
+const replacement = createCar(spec.color, true, spec.modelStyle);
+const children = [...replacement.children];
+for (const child of children) {
+replacement.remove(child);
+player.add(child);
+}
+player.userData.syntheticChildren = children;
+player.userData.paint = replacement.userData.paint;
+player.userData.wheels = replacement.userData.wheels;
+player.userData.body = replacement.userData.body;
+player.userData.bodyBaseY = replacement.userData.bodyBaseY;
+player.userData.modelStyle = replacement.userData.modelStyle;
+player.userData.collisionHalfWidth = replacement.userData.collisionHalfWidth;
+player.userData.collisionHalfLength = replacement.userData.collisionHalfLength;
+}
+if (player.userData.starterModel) {
+player.remove(player.userData.starterModel);
+player.userData.starterModel = null;
+}
+for (const child of player.userData.syntheticChildren || []) child.visible = true;
+if (carId === 'starter') {
+loadStarterModel()
+.then((source) => {
+if (selectedCar === carId) {
+const model = prepareStarterModel(source);
+player.userData.starterModel = model;
+player.add(model);
+for (const child of player.userData.syntheticChildren || []) child.visible = false;
+}
+starterLoadFinished = true;
+finishLoadingScreen();
+})
+.catch((err) => {
+console.error('Could not load 2023_lexus_ls_500h.glb:', err);
+starterLoadFinished = true;
+finishLoadingScreen();
+});
+}
+}
 function createEnvironment() {
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
 for (let i = 0; i < 3; i++) {
