@@ -861,8 +861,12 @@ function normalizeRoadSegment(source) {
       if (mat) mat.needsUpdate = true;
     }
   });
-  model.userData.segmentLength = scaledSize.z;
-  return model;
+  // Keep the centering offset on a child. placeOnRoad() moves the outer
+  // segment group, so putting this offset on the root would be overwritten.
+  const segmentRoot = new THREE.Group();
+  segmentRoot.add(model);
+  segmentRoot.userData.segmentLength = scaledSize.z;
+  return segmentRoot;
 }
 
 function buildModularRoadSegments() {
