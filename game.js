@@ -948,6 +948,7 @@ function spawnTraffic() {
   traffic.push({
     mesh: car, lane, oncoming, botSpeed,
     lateralX: lane,
+    pathZ: z,
     baseHeading,
     targetSpeed: botSpeed,
     targetLane: lane,
@@ -1064,7 +1065,7 @@ cameraShake = 0;
 nearMissChain = 0;
 playerLateral = lanes.at(2);
 placeOnRoad(player, playerLateral, 7);
-player.rotation.set(0, 0, roadHeading(7));
+player.rotation.set(0, roadHeading(7), 0);
 updateCamera(0, 0);
 clearTraffic();
 for (const particle of particles) scene.remove(particle.mesh);
@@ -1223,12 +1224,13 @@ for (const road of roads) {
   placeOnRoad(road, 0, road.userData.roadStation);
 }
 for (const prop of scenery) {
-  prop.position.z += move;
-  if (prop.position.z > 28) prop.position.z -= 270;
+  let roadZ = (prop.userData.roadZ ?? prop.position.z) + move;
+  if (roadZ > 28) roadZ -= 270;
+  prop.userData.roadZ = roadZ;
   const lateral = prop.userData.roadLateral ?? prop.position.x;
   prop.userData.roadLateral = lateral;
   const y = prop.position.y;
-  placeOnRoad(prop, lateral, prop.position.z);
+  placeOnRoad(prop, lateral, roadZ);
   prop.position.y = y;
 }
 for (const ground of grounds) {
@@ -1276,7 +1278,7 @@ function updateTraffic(dt, previousPlayer) {
       : dense ? 0.22 + Math.random() * 0.2 : 0.25 + Math.random() * 0.2;
   }
 
-  const oldPositions = new Map(traffic.map((item) => [item, item.mesh.position.z]));
+  const oldPositions = new Map(traffic.map((item) => [item, item.pathZ]));
   const playerMps = actualSpeed / 3.6 * 2;
 
   for (const item of traffic) {
@@ -1285,9 +1287,9 @@ function updateTraffic(dt, previousPlayer) {
     if (!item.oncoming) {
       item.laneChangeCooldown -= dt;
       const leader = traffic
-        .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.mesh.position.z < item.mesh.position.z)
+        .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
         .sort((a, b) => b.mesh.position.z - a.mesh.position.z)[0];
-      const gap = leader ? item.mesh.position.z - leader.mesh.position.z : Infinity;
+      const gap = leader ? item.pathZ - leader.pathZ : Infinity;
       const desiredCruise = item.targetSpeed;
 
       if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
@@ -1312,7 +1314,7 @@ function updateTraffic(dt, previousPlayer) {
     }
 
     const botMps = item.botSpeed / 3.6 * 2;
-    item.mesh.position.z += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
+    item.pathZ += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
     for (const wheel of (item.mesh.userData.wheels || [])) {
       wheel.rotation.x += item.botSpeed / 3.6 * dt;
     }
@@ -1329,18 +1331,18 @@ function updateTraffic(dt, previousPlayer) {
       const leader = group[index - 1];
       const follower = group[index];
       const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
-      follower.mesh.position.z = Math.min(follower.mesh.position.z, leader.mesh.position.z - safeGap);
+      follower.pathZ = Math.min(follower.pathZ, leader.pathZ - safeGap);
     }
   }
   // Convert each bot's lane-relative position onto the same curved centerline.
   for (const item of traffic) {
     const headingOffset = item.baseHeading + (item.oncoming ? Math.PI : 0);
-    placeOnRoad(item.mesh, item.lateralX, item.mesh.position.z, headingOffset);
+    placeOnRoad(item.mesh, item.lateralX, item.pathZ, headingOffset);
   }
 
   for (let index = traffic.length - 1; index >= 0; index--) {
     const item = traffic[index];
-    const newZ = item.mesh.position.z;
+    const newZ = item.pathZ;
     const prevRelZ = oldPositions.get(item) - previousPlayer.z;
     const nextRelZ = newZ - player.position.z;
     const relDeltaZ = nextRelZ - prevRelZ;
@@ -1387,7 +1389,7 @@ particles.splice(index, 1);
 }
 if (!running || paused) return;
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
-const previousPlayer = { x: player.position.x, z: player.position.z };
+const previousPlayer = { x: player.position.x, z: 7 };
 nitroActive = keys.nitro && nitro > 0 && !keys.brake;
 if (nitroActive) nitro = Math.max(0, nitro - dt * 34);
 else nitro = Math.min(100, nitro + dt * 8);
