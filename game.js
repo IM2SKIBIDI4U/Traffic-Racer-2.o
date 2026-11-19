@@ -874,26 +874,21 @@ function loadRoadsideModels() {
     gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
   });
 
-  Promise.all([
-    loadOne('road_modular.glb').then((source) => {
-      replaceRoadWithModularModel(source);
-      console.info('Loaded road_modular.glb as the driving surface.');
-    }).catch((error) => {
-      console.error('Could not load road_modular.glb; keeping the procedural road fallback:', error);
-    }),
-    loadOne('small_red_gas_station.glb').then((source) => {
-      for (const side of [-1, 1]) {
-        const station = normalizeRoadsideModel(source, 17, true);
-        station.name = 'red-gas-station';
-        station.userData.roadLateral = side * 23;
-        placeOnRoad(station, side * 23, -105);
-        scene.add(station);
-        scenery.push(station);
-      }
-    }).catch((error) => {
-      console.error('Could not load red gas station GLB:', error);
-    })
-  ]).finally(() => {
+  // Keep the procedural curved road as the guaranteed driving surface.
+  // The modular GLB had an incompatible orientation/fit and could replace the
+  // visible road with geometry that appeared missing. Do not remove the fallback.
+  loadOne('small_red_gas_station.glb').then((source) => {
+    for (const side of [-1, 1]) {
+      const station = normalizeRoadsideModel(source, 17, true);
+      station.name = 'red-gas-station';
+      station.userData.roadLateral = side * 23;
+      placeOnRoad(station, side * 23, -105);
+      scene.add(station);
+      scenery.push(station);
+    }
+  }).catch((error) => {
+    console.error('Could not load red gas station GLB:', error);
+  }).finally(() => {
     roadsideLoadFinished = true;
     finishLoadingScreen();
   });
