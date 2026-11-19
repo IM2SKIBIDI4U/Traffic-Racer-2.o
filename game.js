@@ -1486,7 +1486,7 @@ function clearPoliceChase() {
 function spawnPoliceChaser(offset=0) {
   const car=createCar(0x172b46,false,2);car.name='police_pursuit_unit';addPoliceLightbar(car);scene.add(car);
   const lateral=THREE.MathUtils.clamp(playerLateral+offset,-6.8,6.8),pathZ=30+policeChasers.length*5;
-  placeOnRoad(car,lateral,pathZ);policeChasers.push({mesh:car,pathZ,lateral,speed:0});
+  placeOnRoad(car,lateral,pathZ);policeChasers.push({mesh:car,pathZ,lateral,speed:160});
 }
 function updatePoliceChase(dt) {
   if(!running)return;
@@ -1496,12 +1496,29 @@ function updatePoliceChase(dt) {
     for(const unit of policeChasers) {
       const phase=Math.floor(performance.now()/170)%2;
       if(unit.mesh.userData.policeLightParts){unit.mesh.userData.policeLightParts[0].visible=phase===0;unit.mesh.userData.policeLightParts[1].visible=phase===1;}
-      const desired=Math.min(195,Math.max(125,actualSpeed+12));
+      const policeMaxSpeed=Math.min(200,160+Math.floor(score/1500)*5);
+      const desired=Math.min(policeMaxSpeed,Math.max(120,actualSpeed+12));
       unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
       unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
       unit.lateral=THREE.MathUtils.damp(unit.lateral,THREE.MathUtils.clamp(playerLateral+(unit.lateral<playerLateral?-1.6:1.6),-7,7),0.65,dt);
       if(unit.pathZ>76)unit.pathZ=54+Math.random()*8;
       placeOnRoad(unit.mesh,unit.lateral,unit.pathZ);
+      // A physical bump from a pursuit car costs one life, with the same
+      // short damage cooldown used for ordinary traffic collisions.
+      const policeGap=unit.pathZ-7;
+      if(Math.abs(policeGap)<4.2 && Math.abs(unit.lateral-playerLateral)<2.35 && hitCooldown<=0) {
+        hitCooldown=1.25;
+        runHealth=Math.max(0,runHealth-1);
+        $('health-value').textContent=String(runHealth);
+        $('health-bar').style.width=(runHealth/3*100)+'%';
+        addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
+        unit.pathZ+=8;
+        const warning=$('damage-warning');
+        warning.classList.add('show');
+        window.clearTimeout(updatePoliceChase.damageTimeout);
+        updatePoliceChase.damageTimeout=window.setTimeout(()=>warning.classList.remove('show'),700);
+        if(runHealth<=0){$('game-over-title').textContent='BUSTED!';finishGame();return;}
+      }
       const gap=unit.pathZ-7;closest=Math.min(closest,Math.abs(gap));
       if(gap<8&&gap>-1&&Math.abs(unit.lateral-playerLateral)<2.3)closeBehind=true;
     }
@@ -1528,31 +1545,30 @@ function updateVehicleSignals(vehicle, direction, time) {
 }
 function updatePlayer(dt) {
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
-const stats = effectiveCarStats(spec);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
-// Steering builds smoothly, but still gives a clear response at highway speed.
-const steeringPower = THREE.MathUtils.clamp(0.22 + actualSpeed / 900, 0.22, 0.48);
+// Restore the more responsive player steering. The slower, gentler steering
+// remains on traffic bots so their lane changes look natural.
+const steeringPower = THREE.MathUtils.clamp(0.78 + actualSpeed / 180, 0.78, 1.65);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
-  steer * stats.handling * steeringPower * (drifting ? 0.38 : 0.3),
-  drifting ? 1.05 : 1.15,
+  steer * spec.handling * steeringPower * (drifting ? 1.12 : 1),
+  drifting ? 3.6 : 5.5,
   dt
 );
 const previousLateral = playerLateral;
-steerVelocity=THREE.MathUtils.clamp(steerVelocity,-1.15,1.15);
 playerLateral = THREE.MathUtils.clamp(playerLateral + steerVelocity * dt, -8, 8);
 if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
 const lateralMotion = (playerLateral - previousLateral) / Math.max(dt, 0.001);
 const steeringYaw = THREE.MathUtils.damp(
   player.userData.steeringYaw || 0,
-  -THREE.MathUtils.clamp(lateralMotion * 0.012, -0.1, 0.1),
-  3.2,
+  -THREE.MathUtils.clamp(lateralMotion * 0.018, -0.16, 0.16),
+  5.5,
   dt
 );
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.004 * (drifting ? 1.1 : 1), 1.8, dt);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1), 5, dt);
 updateVehicleSignals(player, steer < 0 ? 'left' : steer > 0 ? 'right' : null, performance.now());
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
