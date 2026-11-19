@@ -1521,7 +1521,7 @@ function spawnPoliceChaser(offset=0) {
 function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
-    // Begin with one officer. Every 3,000 metres adds two more officers.
+    // Begin with one officer. Every 300 metres adds two more officers.
     const targetPoliceCount=1+Math.floor(score/300)*2;
     while(policeChasers.length<targetPoliceCount) {
       const index=policeChasers.length;
@@ -1538,8 +1538,9 @@ function updatePoliceChase(dt) {
         unit.mesh.userData.policeLightParts[1].visible=phase===1;
       }
       // Each officer starts at 10 km/h, then builds speed during the chase.
-      const policeMaxSpeed=Math.min(200,10+Math.max(0,score-unit.spawnScore)*0.08);
-      unit.speed=THREE.MathUtils.damp(unit.speed,policeMaxSpeed,0.42,dt);
+      // Each officer starts at 10 km/h and reaches 200 km/h over 300 metres of pursuit.
+      const policeMaxSpeed=Math.min(200,10+Math.max(0,score-unit.spawnScore)*(190/300));
+      unit.speed=policeMaxSpeed;
       const previousGap=unit.pathZ-7;
       // Positive pathZ is behind the player. A faster officer closes the gap.
       unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
