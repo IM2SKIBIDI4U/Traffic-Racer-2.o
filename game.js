@@ -109,6 +109,22 @@ let weatherMode = load('tr-weather', 'clear');
 let weatherClock = 0;
 let dayCycleClock = 0;
 let weatherParticles = null;
+let locationIndex = Number(load('tr-location','0')) || 0;
+let upgradeLevels;
+try { upgradeLevels = JSON.parse(load('tr-upgrades','{"engine":0,"handling":0,"brakes":0}')); }
+catch { upgradeLevels = {engine:0,handling:0,brakes:0}; }
+upgradeLevels = {engine:Math.min(5,Math.max(0,upgradeLevels.engine||0)),handling:Math.min(5,Math.max(0,upgradeLevels.handling||0)),brakes:Math.min(5,Math.max(0,upgradeLevels.brakes||0))};
+let lastAchievementScore = 0;
+let dailyDate = new Date().toISOString().slice(0,10);
+let dailyProgress = Number(load('tr-daily-progress','0')) || 0;
+let dailyClaimed = load('tr-daily-claimed','') === dailyDate;
+let unlockedAchievements;
+try { unlockedAchievements = new Set(JSON.parse(load('tr-achievements','[]'))); } catch { unlockedAchievements = new Set(); }
+const locationThemes = [
+  {name:'COUNTRYSIDE',sky:0x9bbdd0,fog:0x9bbdd0,ground:0x607a5d},
+  {name:'DESERT HIGHWAY',sky:0xd6a77e,fog:0xc69b79,ground:0x9a8059},
+  {name:'MOUNTAIN PASS',sky:0x91aabd,fog:0x91aabd,ground:0x586b68}
+];
 
 const material = (color, roughness = 0.65, metalness = 0.05, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
@@ -973,6 +989,31 @@ renderGarage();
 });
 list.append(button);
 }
+const upgradePanel=document.createElement('div');
+upgradePanel.className='upgrade-panel';
+upgradePanel.innerHTML='<h3>PERFORMANCE UPGRADES</h3><p>Engine Lv. '+upgradeLevels.engine+'/5 · Handling Lv. '+upgradeLevels.handling+'/5 · Brakes Lv. '+upgradeLevels.brakes+'/5</p>';
+for(const [key,label] of [['engine','ENGINE'],['handling','HANDLING'],['brakes','BRAKES']]){
+  const button=document.createElement('button'); button.className='secondary-button';
+  const cost=350*(upgradeLevels[key]+1);
+  button.textContent=upgradeLevels[key]>=5?label+' MAXED': 'UPGRADE '+label+' · '+cost+' CREDITS';
+  button.disabled=upgradeLevels[key]>=5;
+  button.addEventListener('click',()=>{
+    if(upgradeLevels[key]>=5)return;
+    if(credits<cost){button.textContent='NEED '+(cost-credits)+' MORE CREDITS';return;}
+    credits-=cost;upgradeLevels[key]++;save('tr-upgrades',JSON.stringify(upgradeLevels));
+    refreshWallet();renderGarage();
+  });
+  upgradePanel.append(button);
+}
+list.append(upgradePanel);
+const paintPanel=document.createElement('div'); paintPanel.className='paint-panel';
+paintPanel.innerHTML='<h3>PAINT SHOP</h3>';
+for(const color of [0x1678c8,0xd54b3e,0x32a879,0xe9a33b,0xe8e8e8,0x252a32,0x8c65bd]){
+  const swatch=document.createElement('button');swatch.className='paint-swatch';swatch.style.background='#'+color.toString(16).padStart(6,'0');swatch.setAttribute('aria-label','Choose paint');
+  swatch.addEventListener('click',()=>{player.userData.paint.color.setHex(color);save('tr-custom-paint',String(color));});
+  paintPanel.append(swatch);
+}
+list.append(paintPanel);
 if (!list.querySelector('.sketchfab-link')) {
 const link = document.createElement('a');
 link.className = 'secondary-button sketchfab-link';
@@ -1164,7 +1205,8 @@ engineGain.gain.setTargetAtTime(running ? (nitroActive ? 0.04 : 0.02) : 0, audio
 }
 function setNight(value) {
 night = value;
-const color = night ? nightColor : dayColor;
+const theme=locationThemes[locationIndex] || locationThemes[0];
+const color = night ? nightColor : new THREE.Color(theme.sky);
 scene.background.copy(color);
 scene.fog.color.copy(color);
 hemi.intensity = night ? 0.45 : 1.45;
@@ -1205,6 +1247,43 @@ function setWeather(mode) {
     weatherParticles.material.size=weatherMode==='snow'?0.11:0.055;
   } else if (weatherParticles) weatherParticles.visible=false;
   if ($('weather-toggle')) $('weather-toggle').textContent=weatherMode.toUpperCase();
+}
+function setLocation(index) {
+  locationIndex=(index+locationThemes.length)%locationThemes.length;
+  const theme=locationThemes[locationIndex];
+  if(!night){scene.background.setHex(theme.sky);scene.fog.color.setHex(theme.fog);}
+  grassMat.color.setHex(theme.ground);
+  save('tr-location',String(locationIndex));
+  if($('location-toggle')) $('location-toggle').textContent=theme.name;
+}
+function effectiveCarStats(spec) {
+  return {
+    maxSpeed: spec.maxSpeed + upgradeLevels.engine*8,
+    acceleration: spec.acceleration + upgradeLevels.engine*1.8,
+    handling: spec.handling + upgradeLevels.handling*0.65,
+    braking: 45 + upgradeLevels.brakes*8
+  };
+}
+function saveAchievements() { save('tr-achievements',JSON.stringify([...unlockedAchievements])); }
+function unlockAchievement(id,label) {
+  if(unlockedAchievements.has(id))return;
+  unlockedAchievements.add(id); saveAchievements();
+  const toast=$('achievement-toast'); toast.textContent='ACHIEVEMENT: '+label;
+  toast.classList.add('show'); window.clearTimeout(unlockAchievement.timeout);
+  unlockAchievement.timeout=window.setTimeout(()=>toast.classList.remove('show'),2200);
+}
+function updateProgression() {
+  const meters=Math.floor(score);
+  if(meters>=1000)unlockAchievement('one-km','1 KM DRIVER');
+  if(meters>=5000)unlockAchievement('five-km','HIGHWAY REGULAR');
+  if(meters>=10000)unlockAchievement('ten-km','ROAD LEGEND');
+  if(meters>=dailyProgress) { dailyProgress=meters; save('tr-daily-progress',String(dailyProgress)); }
+  if(!dailyClaimed && meters>=2000) {
+    dailyClaimed=true; save('tr-daily-claimed',dailyDate); awardCredits(100);
+    const toast=$('achievement-toast'); toast.textContent='DAILY CHALLENGE COMPLETE: +100 CREDITS';
+    toast.classList.add('show'); window.clearTimeout(unlockAchievement.timeout);
+    unlockAchievement.timeout=window.setTimeout(()=>toast.classList.remove('show'),2600);
+  }
 }
 function updateWeather(dt) {
   weatherClock += dt; dayCycleClock += dt;
@@ -1268,13 +1347,14 @@ asphalt.offset.y = (asphalt.offset.y - move * 0.018) % 1;
 }
 function updatePlayer(dt) {
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
+const stats = effectiveCarStats(spec);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 // Steering builds smoothly, but still gives a clear response at highway speed.
 const steeringPower = THREE.MathUtils.clamp(0.78 + actualSpeed / 180, 0.78, 1.65);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
-  steer * spec.handling * steeringPower * (drifting ? 1.12 : 1),
+  steer * stats.handling * steeringPower * (drifting ? 1.12 : 1),
   drifting ? 3.6 : 5.5,
   dt
 );
@@ -1524,13 +1604,14 @@ particles.splice(index, 1);
 }
 if (!running || paused) return;
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
+const stats = effectiveCarStats(spec);
 const previousPlayer = { x: player.position.x, z: 7 };
 nitroActive = keys.nitro && nitro > 0 && !keys.brake;
 if (nitroActive) nitro = Math.max(0, nitro - dt * 34);
 else nitro = Math.min(100, nitro + dt * 8);
 const throttle = autoAccel || keys.accelerate;
-const maxSpeed = spec.maxSpeed + (nitroActive ? 45 : 0);
-if (keys.brake) actualSpeed = Math.max(0, actualSpeed - (45 + actualSpeed * 0.12) * dt);
+const maxSpeed = stats.maxSpeed + (nitroActive ? 45 : 0);
+if (keys.brake) actualSpeed = Math.max(0, actualSpeed - (stats.braking + actualSpeed * 0.12) * dt);
 else if (throttle) actualSpeed = Math.min(maxSpeed, actualSpeed + spec.acceleration * (nitroActive ? 1.55 : 1) * dt);
 else actualSpeed = Math.max(0, actualSpeed - (2 + actualSpeed * 0.018) * dt);
 if (Math.abs(player.position.x) > 7.5) actualSpeed = Math.max(0, actualSpeed - 20 * dt);
@@ -1541,6 +1622,7 @@ updateWorld(dt);
 updatePlayer(dt);
 updateTraffic(dt, previousPlayer);
 score += actualSpeed / 3.6 * dt;
+updateProgression();
 $('score').textContent = Math.floor(score).toLocaleString();
 $('speed').textContent = Math.round(actualSpeed).toString();
 $('nitro-fill').style.width = nitro + '%';
@@ -1654,6 +1736,7 @@ clearTraffic();
 syncSettings();
 });
 $('night-toggle').addEventListener('click', () => setNight(!night));
+$('location-toggle').addEventListener('click', () => setLocation(locationIndex+1));
 $('weather-toggle').addEventListener('click', () => {
   const modes=['clear','rain','fog','snow'];
   setWeather(modes[(modes.indexOf(weatherMode)+1)%modes.length]);
@@ -1669,6 +1752,7 @@ syncSettings();
 createEnvironment();
 createPlayer();
 setNight(night);
+setLocation(locationIndex);
 setWeather(weatherMode);
 renderGarage();
 refreshWallet();
