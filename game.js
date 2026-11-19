@@ -1120,6 +1120,12 @@ function showMenu() {
 }
 function showGarage() { if (running) { running = false; paused = false; } renderGarage(); showPage('garage-page'); }
 function showSettings() { if (running) { running = false; paused = false; } syncSettings(); showPage('settings-page'); }
+function syncModeButtons() {
+  $('mode-escape').classList.toggle('active',gameMode==='escape');
+  $('mode-police').classList.toggle('active',gameMode==='police');
+  $('mode-escape').setAttribute('aria-pressed',String(gameMode==='escape'));
+  $('mode-police').setAttribute('aria-pressed',String(gameMode==='police'));
+}
 function syncSettings() {
 const set = (id, label, active) => {
 const button = $(id);
@@ -1140,6 +1146,7 @@ refreshDailyDate();
 for (const key of Object.keys(keys)) keys[key] = false;
 if ($('game-over')) $('game-over').style.display = '';
 score = 0;
+$('game-over-title').textContent=gameMode==='police'?'SHIFT ENDED':'CHASE OVER';
 clearPoliceChase();
 setPlayerPoliceLights(gameMode === 'police');
 dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',dailyDate);
@@ -1475,17 +1482,18 @@ function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
     while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.6:1.6);
-    const playerMps=actualSpeed/3.6*2;let closest=Infinity;
+    const playerMps=actualSpeed/3.6*2;let closest=Infinity;let closeBehind=false;
     for(const unit of policeChasers) {
-      const desired=Math.min(250,Math.max(92,actualSpeed+17));
+      const desired=205;
       unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
       unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
       unit.lateral=THREE.MathUtils.damp(unit.lateral,THREE.MathUtils.clamp(playerLateral+(unit.lateral<playerLateral?-1.6:1.6),-7,7),0.65,dt);
       if(unit.pathZ>76)unit.pathZ=54+Math.random()*8;
       placeOnRoad(unit.mesh,unit.lateral,unit.pathZ);
       const gap=unit.pathZ-7;closest=Math.min(closest,Math.abs(gap));
-      if(gap<8&&gap>-1&&Math.abs(unit.lateral-playerLateral)<2.3)policeCatchTime+=dt;
+      if(gap<8&&gap>-1&&Math.abs(unit.lateral-playerLateral)<2.3)closeBehind=true;
     }
+    if(closeBehind)policeCatchTime+=dt;
     if(closest>38)escapeProgress+=actualSpeed/3.6*dt;
     else escapeProgress=Math.max(0,escapeProgress-dt*12);
     policeCatchTime=Math.max(0,policeCatchTime-dt*0.45);
@@ -1875,6 +1883,9 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 button.addEventListener(type, release);
 }
 });
+$('mode-escape').addEventListener('click',()=>{gameMode='escape';save('tr-game-mode',gameMode);setPlayerPoliceLights(false);syncModeButtons();});
+$('mode-police').addEventListener('click',()=>{gameMode='police';save('tr-game-mode',gameMode);setPlayerPoliceLights(true);syncModeButtons();});
+syncModeButtons();
 $('menu-play').addEventListener('click', startGame);
 $('garage-play').addEventListener('click', startGame);
 $('retry-button').addEventListener('click', startGame);
