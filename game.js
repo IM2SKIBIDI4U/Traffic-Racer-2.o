@@ -865,7 +865,8 @@ function spawnTraffic() {
   if (!availableLanes.length) return false;
   const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
   const oncoming = roadMode === 'two-way' && lane < 0;
-  const botSpeed = 60 + Math.random() * 100;
+  const difficulty = Math.min(8, Math.floor(score / 500));
+  const botSpeed = 60 + Math.random() * 100 + difficulty * 4.5;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   let car;
   const fleet = activeTrafficVehicles || [];
@@ -1199,12 +1200,27 @@ function updatePlayer(dt) {
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
-steerVelocity = THREE.MathUtils.damp(steerVelocity, steer * spec.handling * (drifting ? 1.16 : 1), drifting ? 4 : 8, dt);
+// Steering builds smoothly, but still gives a clear response at highway speed.
+const steeringPower = THREE.MathUtils.clamp(0.78 + actualSpeed / 180, 0.78, 1.65);
+steerVelocity = THREE.MathUtils.damp(
+  steerVelocity,
+  steer * spec.handling * steeringPower * (drifting ? 1.12 : 1),
+  drifting ? 3.6 : 5.5,
+  dt
+);
+const previousLateral = playerLateral;
 playerLateral = THREE.MathUtils.clamp(playerLateral + steerVelocity * dt, -8, 8);
-const steeringYaw = THREE.MathUtils.damp(player.userData.steeringYaw || 0, -steer * (drifting ? 0.1 : 0.04), 7, dt);
+if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
+const lateralMotion = (playerLateral - previousLateral) / Math.max(dt, 0.001);
+const steeringYaw = THREE.MathUtils.damp(
+  player.userData.steeringYaw || 0,
+  -THREE.MathUtils.clamp(lateralMotion * 0.018, -0.16, 0.16),
+  5.5,
+  dt
+);
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -steerVelocity * 0.022 * (drifting ? 0.7 : 1), 7, dt);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1), 5, dt);
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
@@ -1219,19 +1235,23 @@ function updateTraffic(dt, previousPlayer) {
   }
   // Keep a buffer of traffic far ahead. This replenishes the road before fast
   // driving brings the player close enough to notice newly spawned vehicles.
+  const difficulty = Math.min(8, Math.floor(score / 500));
+  const trafficLimit = Math.min(24, 16 + difficulty);
+  const desiredTrafficAhead = Math.min(16, 10 + difficulty);
   const trafficAhead = traffic.filter((item) => item.pathZ < -35).length;
   spawnTimer -= dt;
-  if (spawnTimer <= 0 && trafficAhead < 10) {
-    const dense = burstTimer > 0;
-    const count = dense && Math.random() < 0.3 ? 2 : 1;
+  if (spawnTimer <= 0 && trafficAhead < desiredTrafficAhead) {
+    const dense = burstTimer > 0 || (difficulty >= 3 && Math.random() < 0.12 + difficulty * 0.025);
+    const count = dense && Math.random() < 0.3 + difficulty * 0.035 ? 2 : 1;
     let spawned = 0;
-    for (let i = 0; i < count && traffic.length < 16; i++) {
+    for (let i = 0; i < count && traffic.length < trafficLimit; i++) {
       if (spawnTraffic()) spawned++;
     }
-    // Refill the distant traffic buffer more frequently at high speed.
+    // Traffic gradually becomes denser as distance increases.
+    const baseInterval = Math.max(0.16, 0.34 - difficulty * 0.018);
     spawnTimer = spawned === 0
-      ? 0.15
-      : dense ? 0.22 + Math.random() * 0.2 : 0.25 + Math.random() * 0.2;
+      ? 0.16
+      : dense ? baseInterval * 0.8 + Math.random() * 0.12 : baseInterval + Math.random() * 0.16;
   }
 
   const oldPositions = new Map(traffic.map((item) => [item, item.pathZ]));
@@ -1275,7 +1295,8 @@ function updateTraffic(dt, previousPlayer) {
         .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
         .sort((a, b) => b.pathZ - a.pathZ)[0];
       const gap = leader ? item.pathZ - leader.pathZ : Infinity;
-      const desiredCruise = item.targetSpeed;
+      const difficulty = Math.min(8, Math.floor(score / 500));
+      const desiredCruise = Math.min(245, item.targetSpeed + difficulty * 4.5);
 
       if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
         const laneOptions = roadMode === 'one-way'
@@ -1300,7 +1321,17 @@ function updateTraffic(dt, previousPlayer) {
         playerBrakeSpeed < desiredCruise ? 2.8 : 1.8,
         dt
       );
-      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 2.8, dt);
+      const previousLateral = item.lateralX;
+      // Gentle lane changes: build lateral speed gradually and steer the body
+      // into the move instead of snapping toward the target lane.
+      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 1.35, dt);
+      item.laneVelocity = (item.lateralX - previousLateral) / Math.max(dt, 0.001);
+      item.mesh.userData.laneSteer = THREE.MathUtils.damp(
+        item.mesh.userData.laneSteer || 0,
+        THREE.MathUtils.clamp(-item.laneVelocity * 0.012, -0.12, 0.12),
+        3.2,
+        dt
+      );
     }
 
     const botMps = item.botSpeed / 3.6 * 2;
@@ -1327,7 +1358,7 @@ function updateTraffic(dt, previousPlayer) {
   // Convert each bot's lane-relative position onto the same curved centerline.
   for (const item of traffic) {
     const headingOffset = item.baseHeading + (item.oncoming ? Math.PI : 0);
-    placeOnRoad(item.mesh, item.lateralX, item.pathZ, headingOffset);
+    placeOnRoad(item.mesh, item.lateralX, item.pathZ, headingOffset + (item.mesh.userData.laneSteer || 0));
   }
 
   for (let index = traffic.length - 1; index >= 0; index--) {
