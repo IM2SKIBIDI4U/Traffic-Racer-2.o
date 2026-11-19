@@ -735,6 +735,7 @@ player.userData.collisionHalfLength = replacement.userData.collisionHalfLength;
 if (player.userData.starterModel) {
 player.remove(player.userData.starterModel);
 player.userData.starterModel = null;
+player.userData.paintTargets = null;
 }
 for (const child of player.userData.syntheticChildren || []) child.visible = true;
 if (carId === 'starter') {
