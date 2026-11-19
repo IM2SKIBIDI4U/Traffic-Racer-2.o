@@ -1245,7 +1245,7 @@ const move = actualSpeed / 3.6 * 2 * dt;
 for (const road of roads) {
   const station = (road.userData.roadStation ?? road.position.z) + move;
   const loopLength = roads.length * roadSegmentLength;
-  road.userData.roadStation = station >= 25 ? station - loopLength : station;
+  road.userData.roadStation = station >= roadSegmentLength / 2 ? station - loopLength : station;
   placeOnRoad(road, 0, road.userData.roadStation);
 }
 for (const prop of scenery) {
