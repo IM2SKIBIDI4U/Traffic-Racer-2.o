@@ -447,43 +447,16 @@ function loadTrafficModels() {
               child.castShadow = false;
               child.receiveShadow = false;
 
-              if (child.geometry.attributes.color) {
-                child.geometry.deleteAttribute('color');
+              // Keep the GLTFLoader material and vertex-colour attribute intact.
+              // Rebuilding materials here discarded authored paint and GLB details.
+              const originalMaterials = Array.isArray(child.material)
+                ? child.material
+                : [child.material];
+              for (const originalMaterial of originalMaterials) {
+                if (!originalMaterial) continue;
+                if (originalMaterial.map) originalMaterial.map.colorSpace = THREE.SRGBColorSpace;
+                if (originalMaterial.emissiveMap) originalMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
               }
-
-              const fixMaterial = (m) => {
-                if (!m) return new THREE.MeshStandardMaterial({ color: 0xcccccc, roughness: 0.45 });
-                const tex =
-                  m.map ||
-                  recoveredTextures.get(m.name) ||
-                  recoveredTextures.values().next().value ||
-                  null;
-
-                if (tex) tex.colorSpace = THREE.SRGBColorSpace;
-
-                // Check if GLTF JSON had a diffuseFactor color
-                const matDef = jsonMaterials.find((jm) => jm.name === m.name);
-                const diffFactor = matDef?.extensions?.KHR_materials_pbrSpecularGlossiness?.diffuseFactor;
-                const baseColor = tex
-                  ? new THREE.Color(0xffffff)
-                  : diffFactor
-                    ? new THREE.Color(diffFactor[0], diffFactor[1], diffFactor[2])
-                    : (m.color ? m.color.clone() : new THREE.Color(0xcccccc));
-
-                return new THREE.MeshStandardMaterial({
-                  map: tex,
-                  color: baseColor,
-                  roughness: 0.45,
-                  metalness: 0.2,
-                  transparent: Boolean(m.transparent),
-                  opacity: typeof m.opacity === 'number' ? m.opacity : 1,
-                  side: THREE.DoubleSide
-                });
-              };
-
-              child.material = Array.isArray(child.material)
-                ? child.material.map(fixMaterial)
-                : fixMaterial(child.material);
             }
           });
 
@@ -663,10 +636,16 @@ if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
 }
 function spawnTraffic() {
-  if (traffic.length >= 16) return;
-  const lane = chooseTrafficLane();
-const z = -210 - Math.random() * 30;
-  if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z - z) < 24)) return;
+  if (traffic.length >= 16) return false;
+  const z = -155 - Math.random() * 20;
+  const laneOptions = roadMode === 'one-way'
+    ? [...lanes]
+    : (Math.random() < 0.38 ? lanes.slice(0, 2) : lanes.slice(2));
+  const availableLanes = laneOptions.filter((candidate) =>
+    !traffic.some((item) => item.lane === candidate && Math.abs(item.mesh.position.z - z) < 24)
+  );
+  if (!availableLanes.length) return false;
+  const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
   const oncoming = roadMode === 'two-way' && lane < 0;
   const botSpeed = 60 + Math.random() * 100;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
@@ -700,6 +679,7 @@ const z = -210 - Math.random() * 30;
     });
   }
   traffic.push({ mesh: car, lane, oncoming, botSpeed, checkedMiss: false, previousZ: z });
+  return true;
 }
 function clearTraffic() {
 for (const item of traffic) scene.remove(item.mesh);
@@ -989,8 +969,14 @@ function updateTraffic(dt, previousPlayer) {
   if (spawnTimer <= 0) {
     const dense = burstTimer > 0;
     const count = dense && Math.random() < 0.3 ? 2 : 1;
-    for (let i = 0; i < count; i++) spawnTraffic();
-    spawnTimer = dense ? 0.22 + Math.random() * 0.2 : 0.7 + Math.random() * 0.55;
+    let spawned = 0;
+    for (let i = 0; i < count; i++) {
+      if (spawnTraffic()) spawned++;
+    }
+    // Retry quickly if every candidate lane was temporarily blocked.
+    spawnTimer = spawned === 0
+      ? 0.15
+      : dense ? 0.22 + Math.random() * 0.2 : 0.7 + Math.random() * 0.55;
   }
 
   const oldPositions = new Map(traffic.map((item) => [item, item.mesh.position.z]));
