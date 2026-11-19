@@ -786,7 +786,6 @@ scene.add(post);
 scenery.push(post);
 }
 }
-}
   addRoadsideDetails();
 }
 function chooseTrafficLane() {
