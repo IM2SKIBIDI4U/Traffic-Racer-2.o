@@ -666,13 +666,7 @@ return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + M
 function spawnTraffic() {
   if (traffic.length >= 16) return;
   const lane = chooseTrafficLane();
-  // 1. First create the car mesh/object:
-const car = template.clone(); // (keep whatever line you already had creating the car)
-
-// 2. THEN set its position further down the road:
-const spawnZ = -260 - Math.random() * 60;
-car.position.set(laneX, 0, spawnZ);
-  car.position.set(laneX, 0, spawnZ);
+  const z = -260 - Math.random() * 60;
   if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z - z) < 24)) return;
   const oncoming = roadMode === 'two-way' && lane < 0;
   const botSpeed = 60 + Math.random() * 100;
