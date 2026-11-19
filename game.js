@@ -623,7 +623,8 @@ function loadTrafficModels() {
         });
 
         if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
-        createTrafficVariants();
+        // Use only the imported GLB fleet when it loads successfully.
+        // Procedural legacy cars are added only by the error fallback below.
       } catch (error) {
         trafficVehicles.length = 0;
         console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
@@ -895,14 +896,10 @@ function loadRoadsideModels() {
     gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
   });
 
-  const roadPromise = loadOne('road_modular.glb').then((source) => {
-    replaceRoadWithModularModel(source);
-    console.info('Modular road loaded:', roadSegmentLength.toFixed(1), 'world units per segment');
-  }).catch((error) => {
-    // The procedural curved road created at startup remains as a safe fallback.
-    console.error('Could not load modular road GLB; keeping procedural road:', error);
-  });
-
+  // road_modular.glb is a multi-piece road layout, not one isolated
+  // repeatable segment. Repeating the entire scene creates parallel duplicate
+  // roads, so keep the continuous curved road created by createEnvironment()
+  // until an individual segment can be selected from that asset.
   const stationPromise = loadOne('small_red_gas_station.glb').then((source) => {
     for (const side of [-1, 1]) {
       const station = normalizeRoadsideModel(source, 17, true);
@@ -916,7 +913,7 @@ function loadRoadsideModels() {
     console.error('Could not load red gas station GLB:', error);
   });
 
-  Promise.allSettled([roadPromise, stationPromise]).finally(() => {
+  stationPromise.finally(() => {
     roadsideLoadFinished = true;
     finishLoadingScreen();
   });
