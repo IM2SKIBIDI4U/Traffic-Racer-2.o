@@ -133,12 +133,10 @@ const grassMat = material(0x607a5d, 1);
 
 // The road follows a continuous centerline. Positive lateral values are to the right.
 function roadCenterX(z) {
-  return 32 * Math.sin((z + 45) / 95) + 14 * Math.sin(z / 43) + 5 * Math.sin((z - 18) / 23);
+  return 0;
 }
 function roadHeading(z) {
-  const delta = 0.5;
-  const slope = (roadCenterX(z + delta) - roadCenterX(z - delta)) / (2 * delta);
-  return Math.atan(slope);
+  return 0;
 }
 function placeOnRoad(object, lateral, z, headingOffset = 0) {
   object.userData.roadZ = z;
@@ -150,9 +148,7 @@ function placeOnRoad(object, lateral, z, headingOffset = 0) {
 
 function createRoad(z, length = roadSegmentLength) {
   const group = new THREE.Group();
-  // Compensate for the diagonal length of a curved segment so neighbouring
-  // pieces meet instead of leaving tiny gaps on the outside of bends.
-  const roadDepth = length / Math.max(0.75, Math.cos(roadHeading(z)));
+  const roadDepth = length;
   const slab = new THREE.Mesh(new THREE.BoxGeometry(18, 0.22, roadDepth), roadMat);
   slab.position.y = -0.02;
   slab.receiveShadow = true;
