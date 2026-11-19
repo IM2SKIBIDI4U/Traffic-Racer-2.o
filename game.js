@@ -1289,7 +1289,7 @@ function updateTraffic(dt, previousPlayer) {
       item.laneChangeCooldown -= dt;
       const leader = traffic
         .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
-        .sort((a, b) => b.mesh.position.z - a.mesh.position.z)[0];
+        .sort((a, b) => b.pathZ - a.pathZ)[0];
       const gap = leader ? item.pathZ - leader.pathZ : Infinity;
       const desiredCruise = item.targetSpeed;
 
@@ -1298,7 +1298,7 @@ function updateTraffic(dt, previousPlayer) {
           ? lanes
           : lanes.slice(2);
         const alternatives = laneOptions.filter((candidate) => candidate !== item.lane &&
-          !traffic.some((other) => other !== item && !other.oncoming && other.lane === candidate && Math.abs(other.mesh.position.z - item.mesh.position.z) < 34)
+          !traffic.some((other) => other !== item && !other.oncoming && other.lane === candidate && Math.abs(other.pathZ - item.pathZ) < 34)
         );
         if (alternatives.length) {
           item.targetLane = alternatives.sort((a, b) => Math.abs(a - item.lane) - Math.abs(b - item.lane))[0];
