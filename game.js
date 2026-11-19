@@ -318,6 +318,7 @@ let starterModelPromise;
 let startupLoadFinished = false;
 let starterLoadFinished = false;
 let trafficLoadFinished = false;
+let roadsideLoadFinished = false;
 
 function updateLoadingScreen(event, asset = 'vehicle model') {
 const progress = event.total ? Math.floor(event.loaded / event.total * 100) : null;
@@ -335,11 +336,11 @@ function finishLoadingScreen() {
   // Wait for both the player car and traffic fleet before allowing gameplay.
   // This prevents fallback traffic from being replaced by loaded GLB models
   // after the race has already started.
-  if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished) return;
+  if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished || !roadsideLoadFinished) return;
   startupLoadFinished = true;
   $('loading-fill').style.width = '100%';
   $('loading-progress').setAttribute('aria-valuenow', '100');
-  $('loading-message').textContent = 'Vehicles ready!';
+  $('loading-message').textContent = 'Vehicles and environment ready!';
   $('loading-screen').classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
@@ -714,33 +715,7 @@ function addRoadsideDetails() {
     }
   }
 
-  for (const side of [-1, 1]) {
-    const station = new THREE.Group();
-    const building = new THREE.Mesh(new THREE.BoxGeometry(7.2, 3.1, 5.2), material(0xb8b8ad, 0.9));
-    building.position.set(0, 1.55, 0);
-    station.add(building);
-    const canopy = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.28, 3.4), roadsideYellow);
-    canopy.position.set(0, 3.25, 2.5);
-    station.add(canopy);
-    for (const x of [-3.1, 3.1]) {
-      const window = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.15, 1.8), roadsideGlass);
-      window.position.set(x, 1.8, 2.64);
-      station.add(window);
-    }
-    for (const x of [-2.25, 0, 2.25]) {
-      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.1, 0.48), roadsideWhite);
-      pump.position.set(x, 0.55, 4.7);
-      station.add(pump);
-      const display = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.035), roadsideGlass);
-      display.position.set(x, 0.75, 4.95);
-      station.add(display);
-    }
-    station.position.set(side * 23, 0, -115);
-    station.scale.setScalar(0.9);
-    station.traverse((o) => { if (o.isMesh) o.castShadow = false; });
-    scene.add(station);
-    scenery.push(station);
-  }
+
 }
 
 function createEnvironment() {
@@ -788,6 +763,83 @@ scenery.push(post);
 }
   addRoadsideDetails();
 }
+
+// Load the two user-provided roadside GLBs. Normalize their pivots and sizes so
+// they fit the game's road scale, and keep their meshes out of the shadow pass.
+function normalizeRoadsideModel(source, targetSize, receiveShadow = true) {
+  const model = source.clone(true);
+  model.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  const largest = Math.max(size.x, size.z);
+  if (!Number.isFinite(largest) || largest <= 0) throw new Error('Roadside GLB has invalid dimensions');
+  model.scale.multiplyScalar(targetSize / largest);
+  model.updateWorldMatrix(true, true);
+  const scaledBounds = new THREE.Box3().setFromObject(model);
+  const center = scaledBounds.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -scaledBounds.min.y, -center.z);
+  model.traverse((object) => {
+    if (!object.isMesh) return;
+    object.castShadow = false;
+    object.receiveShadow = receiveShadow;
+    object.frustumCulled = true;
+    object.geometry?.computeBoundingSphere();
+    const mats = Array.isArray(object.material) ? object.material : [object.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      if (mat.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+      mat.needsUpdate = true;
+    }
+  });
+  return model;
+}
+
+function loadRoadsideModels() {
+  const base = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/';
+  const loadOne = (file) => new Promise((resolve, reject) => {
+    gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
+  });
+
+  Promise.allSettled([
+    loadOne('highway_lnterchange_overpass.glb'),
+    loadOne('small_red_gas_station.glb')
+  ]).then(([overpassResult, stationResult]) => {
+    if (overpassResult.status === 'fulfilled') {
+      try {
+        const overpass = normalizeRoadsideModel(overpassResult.value, 64, false);
+        overpass.name = 'highway-interchange';
+        overpass.position.set(0, 0, -165);
+        scene.add(overpass);
+        scenery.push(overpass);
+      } catch (error) {
+        console.error('Could not configure highway interchange:', error);
+      }
+    } else {
+      console.error('Could not load highway interchange GLB:', overpassResult.reason);
+    }
+
+    if (stationResult.status === 'fulfilled') {
+      try {
+        const source = stationResult.value;
+        for (const side of [-1, 1]) {
+          const station = normalizeRoadsideModel(source, 17, true);
+          station.name = 'red-gas-station';
+          station.position.set(side * 23, 0, -105);
+          scene.add(station);
+          scenery.push(station);
+        }
+      } catch (error) {
+        console.error('Could not configure red gas station:', error);
+      }
+    } else {
+      console.error('Could not load red gas station GLB:', stationResult.reason);
+    }
+
+    roadsideLoadFinished = true;
+    finishLoadingScreen();
+  });
+}
+
 function chooseTrafficLane() {
 if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length)];
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
@@ -1418,6 +1470,7 @@ loadStarterModel()
     finishLoadingScreen();
   });
 window.setTimeout(loadTrafficModels, 0);
+window.setTimeout(loadRoadsideModels, 0);
 window.addEventListener('resize', resize);
 window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 animate();
