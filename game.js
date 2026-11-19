@@ -295,10 +295,16 @@ $('loading-message').textContent = 'Loading ' + asset + '…';
 }
 
 function finishLoadingScreen() {
-if (startupLoadFinished || !starterLoadFinished) return;
-startupLoadFinished = true;
-$('loading-screen').classList.add('hidden');
-$('main-menu').classList.remove('hidden');
+  // Wait for both the player car and traffic fleet before allowing gameplay.
+  // This prevents fallback traffic from being replaced by loaded GLB models
+  // after the race has already started.
+  if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished) return;
+  startupLoadFinished = true;
+  $('loading-fill').style.width = '100%';
+  $('loading-progress').setAttribute('aria-valuenow', '100');
+  $('loading-message').textContent = 'Vehicles ready!';
+  $('loading-screen').classList.add('hidden');
+  $('main-menu').classList.remove('hidden');
 }
 
 function loadStarterModel() {
