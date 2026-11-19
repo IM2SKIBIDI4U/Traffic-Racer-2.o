@@ -683,7 +683,8 @@ return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + M
 }
 function spawnTraffic() {
   if (traffic.length >= 16) return false;
-  const z = -155 - Math.random() * 20;
+  // Place traffic well beyond the visible driving area so it is already on the road before the player reaches it.
+  const z = -225 - Math.random() * 30;
   const laneOptions = roadMode === 'one-way'
     ? [...lanes]
     : (Math.random() < 0.38 ? lanes.slice(0, 2) : lanes.slice(2));
@@ -1018,18 +1019,21 @@ function updateTraffic(dt, previousPlayer) {
     burstCooldown = 13 + Math.random() * 14;
     spawnTimer = 0;
   }
+  // Keep a buffer of traffic far ahead. This replenishes the road before fast
+  // driving brings the player close enough to notice newly spawned vehicles.
+  const trafficAhead = traffic.filter((item) => item.mesh.position.z < -35).length;
   spawnTimer -= dt;
-  if (spawnTimer <= 0) {
+  if (spawnTimer <= 0 && trafficAhead < 10) {
     const dense = burstTimer > 0;
     const count = dense && Math.random() < 0.3 ? 2 : 1;
     let spawned = 0;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < count && traffic.length < 16; i++) {
       if (spawnTraffic()) spawned++;
     }
-    // Retry quickly if every candidate lane was temporarily blocked.
+    // Refill the distant traffic buffer more frequently at high speed.
     spawnTimer = spawned === 0
       ? 0.15
-      : dense ? 0.22 + Math.random() * 0.2 : 0.7 + Math.random() * 0.55;
+      : dense ? 0.22 + Math.random() * 0.2 : 0.25 + Math.random() * 0.2;
   }
 
   const oldPositions = new Map(traffic.map((item) => [item, item.mesh.position.z]));
@@ -1086,7 +1090,7 @@ function updateTraffic(dt, previousPlayer) {
       else if (dx >= 3.3) nearMissChain = 0;
     }
 
-    if (newZ > 24 || newZ < -190) {
+    if (newZ > 24 || newZ < -300) {
       scene.remove(item.mesh);
       traffic.splice(index, 1);
     }
