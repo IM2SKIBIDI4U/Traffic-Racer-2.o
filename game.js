@@ -725,7 +725,15 @@ function spawnTraffic() {
       meshes: car.getObjectsByProperty('isMesh', true).length
     });
   }
-  traffic.push({ mesh: car, lane, oncoming, botSpeed, checkedMiss: false, previousZ: z });
+  traffic.push({
+    mesh: car, lane, oncoming, botSpeed,
+    targetSpeed: botSpeed,
+    targetLane: lane,
+    laneChangeCooldown: 2 + Math.random() * 5,
+    drivingStyle: Math.random(),
+    checkedMiss: false,
+    previousZ: z
+  });
   return true;
 }
 function clearTraffic() {
@@ -1040,6 +1048,37 @@ function updateTraffic(dt, previousPlayer) {
   const playerMps = actualSpeed / 3.6 * 2;
 
   for (const item of traffic) {
+    // Simple driver AI: look for a slower vehicle ahead and decide whether
+    // to slow down or safely move into a neighbouring lane to pass it.
+    if (!item.oncoming) {
+      item.laneChangeCooldown -= dt;
+      const leader = traffic
+        .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.mesh.position.z < item.mesh.position.z)
+        .sort((a, b) => b.mesh.position.z - a.mesh.position.z)[0];
+      const gap = leader ? item.mesh.position.z - leader.mesh.position.z : Infinity;
+      const desiredCruise = item.targetSpeed;
+
+      if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
+        const laneOptions = roadMode === 'one-way'
+          ? lanes
+          : lanes.slice(2);
+        const alternatives = laneOptions.filter((candidate) => candidate !== item.lane &&
+          !traffic.some((other) => other !== item && !other.oncoming && other.lane === candidate && Math.abs(other.mesh.position.z - item.mesh.position.z) < 34)
+        );
+        if (alternatives.length) {
+          item.targetLane = alternatives.sort((a, b) => Math.abs(a - item.lane) - Math.abs(b - item.lane))[0];
+          item.lane = item.targetLane;
+          item.laneChangeCooldown = 5 + Math.random() * 7;
+        }
+      }
+
+      const followingSpeed = leader && gap < 22
+        ? Math.max(35, leader.botSpeed - (22 - gap) * 2.2)
+        : desiredCruise;
+      item.botSpeed = THREE.MathUtils.damp(item.botSpeed, Math.min(desiredCruise, followingSpeed), 1.8, dt);
+      item.mesh.position.x = THREE.MathUtils.damp(item.mesh.position.x, item.targetLane, 2.8, dt);
+    }
+
     const botMps = item.botSpeed / 3.6 * 2;
     item.mesh.position.z += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
     for (const wheel of (item.mesh.userData.wheels || [])) {
