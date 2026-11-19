@@ -961,6 +961,8 @@ function spawnTraffic() {
   const botSpeed = 60 + Math.random() * 100 + difficulty * 4.5;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
+  // In Police mode, keep exactly one marked suspect active at a time.
+  const isTarget = gameMode === 'police' && !traffic.some((item) => item.isTarget);
   let car;
   const fleet = activeTrafficVehicles || [];
   if (isPolice) {
@@ -984,6 +986,26 @@ function spawnTraffic() {
     car.rotation.y = Math.PI;
   }
   if (isPolice) car.rotation.y = Math.PI;
+  if (isTarget) {
+    car.name = 'police_mode_target';
+    const beacon = new THREE.Group();
+    const glow = new THREE.Mesh(
+      new THREE.SphereGeometry(0.42, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0x35eaff, toneMapped: false })
+    );
+    glow.position.y = 2.35;
+    const halo = new THREE.Mesh(
+      new THREE.TorusGeometry(0.72, 0.075, 8, 24),
+      new THREE.MeshBasicMaterial({ color: 0x35eaff, transparent: true, opacity: 0.9, toneMapped: false })
+    );
+    halo.rotation.x = Math.PI / 2;
+    halo.position.y = 2.35;
+    const beaconLight = new THREE.PointLight(0x35eaff, 2.2, 15, 2);
+    beaconLight.position.y = 2.35;
+    beacon.add(glow, halo, beaconLight);
+    car.add(beacon);
+    car.userData.targetBeacon = beacon;
+  }
   attachTrafficTurnSignals(car);
   const baseHeading = car.rotation.y;
   placeOnRoad(car, lane, z, baseHeading + (oncoming ? Math.PI : 0));
@@ -1013,6 +1035,7 @@ function spawnTraffic() {
     drivingStyle: Math.random(),
     playerReactionCooldown: 0.4 + Math.random() * 1.2,
     checkedMiss: false,
+    isTarget,
     previousZ: z
   });
   return true;
@@ -1638,6 +1661,12 @@ function updateTraffic(dt, previousPlayer) {
       item.mesh.userData.policeLights[0].visible=phase===0;
       item.mesh.userData.policeLights[1].visible=phase===1;
     }
+    if (item.isTarget && item.mesh.userData.targetBeacon) {
+      const beacon = item.mesh.userData.targetBeacon;
+      beacon.rotation.y += dt * 1.8;
+      const pulse = 0.72 + Math.sin(performance.now() * 0.008) * 0.28;
+      beacon.scale.setScalar(pulse);
+    }
     // Simple driver AI: look for a slower vehicle ahead and decide whether
     // to slow down or safely move into a neighbouring lane to pass it.
     if (!item.oncoming) {
@@ -1785,10 +1814,16 @@ function updateTraffic(dt, previousPlayer) {
     const dx = closestDx;
 
     if (collision && hitCooldown <= 0) {
-      if (gameMode === 'police') {
-        arrests++;awardCredits(20);scene.remove(item.mesh);traffic.splice(index,1);
-        const toast=$('near-miss');toast.textContent='VEHICLE STOPPED · +20';toast.classList.add('show');
-        window.clearTimeout(updateTraffic.damageTimeout);updateTraffic.damageTimeout=window.setTimeout(()=>toast.classList.remove('show'),850);
+      if (gameMode === 'police' && item.isTarget) {
+        arrests++;
+        awardCredits(20);
+        scene.remove(item.mesh);
+        traffic.splice(index,1);
+        const toast=$('near-miss');
+        toast.textContent='TARGET STOPPED · +20';
+        toast.classList.add('show');
+        window.clearTimeout(updateTraffic.damageTimeout);
+        updateTraffic.damageTimeout=window.setTimeout(()=>toast.classList.remove('show'),850);
         if(arrests>=5){$('game-over-title').textContent='SHIFT COMPLETE!';finishGame();return;}
         continue;
       }
