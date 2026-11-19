@@ -103,6 +103,12 @@ let engineOscillator;
 let engineGain;
 let engineFilter;
 let nearMissChain = 0;
+let runHealth = 3;
+let hitCooldown = 0;
+let weatherMode = load('tr-weather', 'clear');
+let weatherClock = 0;
+let dayCycleClock = 0;
+let weatherParticles = null;
 
 const material = (color, roughness = 0.65, metalness = 0.05, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
@@ -869,9 +875,19 @@ function spawnTraffic() {
   const difficulty = Math.min(8, Math.floor(score / 500));
   const botSpeed = 60 + Math.random() * 100 + difficulty * 4.5;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
+  const isPolice = score > 250 && Math.random() < 0.055;
   let car;
   const fleet = activeTrafficVehicles || [];
-  if (fleet.length) {
+  if (isPolice) {
+    car = createCar(0x172b46, false, 0);
+    car.name = 'police_patrol';
+    const lightBar = new THREE.Mesh(new THREE.BoxGeometry(0.82,0.12,0.24),material(0x18202a,0.35));
+    lightBar.position.set(0,1.72,-0.12);
+    const red = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.13,0.22),new THREE.MeshBasicMaterial({color:0xff253c}));
+    const blue = new THREE.Mesh(new THREE.BoxGeometry(0.32,0.13,0.22),new THREE.MeshBasicMaterial({color:0x258bff}));
+    red.position.set(-0.23,1.73,-0.12); blue.position.set(0.23,1.73,-0.12);
+    car.add(lightBar,red,blue); car.userData.policeLights=[red,blue];
+  } else if (fleet.length) {
     const source = fleet[Math.floor(Math.random() * fleet.length)];
     car = source.clone(true);
     car.userData.wheels = getTrafficWheels(car);
@@ -1009,6 +1025,8 @@ function startGame() {
 for (const key of Object.keys(keys)) keys[key] = false;
 if ($('game-over')) $('game-over').style.display = '';
 score = 0;
+runHealth=3; hitCooldown=0;
+$('health-value').textContent='3'; $('health-bar').style.width='100%';
 actualSpeed = 0;
 steerVelocity = 0;
 nitro = 100;
@@ -1156,6 +1174,57 @@ if (player?.userData.headlamp) player.userData.headlamp.intensity = night ? 2.8 
 save('tr-night', night);
 syncSettings();
 }
+function setWeather(mode) {
+  weatherMode = ['clear', 'rain', 'fog', 'snow'].includes(mode) ? mode : 'clear';
+  save('tr-weather', weatherMode);
+  const cfg = {
+    clear: [140, 340, night ? 0.45 : 1.45, night ? 0.18 : 2.2, 0.94],
+    rain: [105, 245, night ? 0.35 : 0.9, night ? 0.12 : 1.25, 0.3],
+    fog: [38, 155, 0.8, 0.75, 0.94],
+    snow: [75, 205, 1.05, 1.0, 0.82]
+  }[weatherMode];
+  scene.fog.near = cfg[0]; scene.fog.far = cfg[1];
+  hemi.intensity = cfg[2]; sun.intensity = cfg[3];
+  roadMat.roughness = cfg[4];
+  roadMat.metalness = weatherMode === 'rain' ? 0.16 : 0.02;
+  if (weatherMode === 'rain' || weatherMode === 'snow') {
+    if (!weatherParticles) {
+      const positions = new Float32Array(420 * 3);
+      for (let i=0;i<420;i++) {
+        positions[i*3]=(Math.random()-.5)*42;
+        positions[i*3+1]=Math.random()*22;
+        positions[i*3+2]=-Math.random()*115;
+      }
+      const geometry=new THREE.BufferGeometry();
+      geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
+      weatherParticles=new THREE.Points(geometry,new THREE.PointsMaterial({color:0x9cc9e8,size:0.06,transparent:true,opacity:0.55}));
+      scene.add(weatherParticles);
+    }
+    weatherParticles.visible=true;
+    weatherParticles.material.color.setHex(weatherMode==='snow'?0xeaf6ff:0x9cc9e8);
+    weatherParticles.material.size=weatherMode==='snow'?0.11:0.055;
+  } else if (weatherParticles) weatherParticles.visible=false;
+  if ($('weather-toggle')) $('weather-toggle').textContent=weatherMode.toUpperCase();
+}
+function updateWeather(dt) {
+  weatherClock += dt; dayCycleClock += dt;
+  if (dayCycleClock >= 105) { dayCycleClock=0; setNight(!night); }
+  if (weatherClock >= 95) {
+    weatherClock=0;
+    const modes=['clear','rain','fog','snow'];
+    setWeather(modes[(modes.indexOf(weatherMode)+1)%modes.length]);
+  }
+  if (weatherParticles?.visible) {
+    const attr=weatherParticles.geometry.attributes.position;
+    const speed=weatherMode==='snow'?5:34;
+    for(let i=0;i<attr.count;i++){
+      let y=attr.getY(i)-speed*dt, z=attr.getZ(i)+(weatherMode==='snow'?5:8)*dt;
+      if(y<0||z>18){y=12+Math.random()*10;z=-90-Math.random()*25;attr.setX(i,(Math.random()-.5)*42);}
+      attr.setY(i,y);attr.setZ(i,z);
+    }
+    attr.needsUpdate=true;
+  }
+}
 function addSparks(position, count = 20) {
 const sparkColors = [0xffd27a, 0xff783d, 0xe9f7ff];
 for (let i = 0; i < count; i++) {
@@ -1227,6 +1296,7 @@ for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.
 }
 function updateTraffic(dt, previousPlayer) {
   if (!running) return;
+  if (hitCooldown > 0) hitCooldown -= dt;
 
   if (burstTimer > 0) burstTimer -= dt;
   else if ((burstCooldown -= dt) <= 0) {
@@ -1262,6 +1332,11 @@ function updateTraffic(dt, previousPlayer) {
   const playerMps = actualSpeed / 3.6 * 2;
 
   for (const item of traffic) {
+    if (item.mesh.userData.policeLights) {
+      const phase=Math.floor(performance.now()/220)%2;
+      item.mesh.userData.policeLights[0].visible=phase===0;
+      item.mesh.userData.policeLights[1].visible=phase===1;
+    }
     // Simple driver AI: look for a slower vehicle ahead and decide whether
     // to slow down or safely move into a neighbouring lane to pass it.
     if (!item.oncoming) {
@@ -1300,7 +1375,8 @@ function updateTraffic(dt, previousPlayer) {
         .sort((a, b) => b.pathZ - a.pathZ)[0];
       const gap = leader ? item.pathZ - leader.pathZ : Infinity;
       const difficulty = Math.min(8, Math.floor(score / 500));
-      const desiredCruise = Math.min(245, item.targetSpeed + difficulty * 4.5);
+      const personalityFactor = item.drivingStyle < 0.25 ? 0.78 : item.drivingStyle > 0.75 ? 1.18 : 1;
+      const desiredCruise = Math.min(245, item.targetSpeed * personalityFactor + difficulty * 4.5);
 
       if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
         const laneOptions = roadMode === 'one-way'
@@ -1405,12 +1481,19 @@ function updateTraffic(dt, previousPlayer) {
     }
     const dx = closestDx;
 
-    if (collision) {
-      console.log('Hit vehicle:', item.mesh.name || 'unnamed', 'at', item.mesh.position.toArray());
-      // Let finishGame() perform the state transition. Setting running=false
-      // here first makes its guard return early and skips the crash screen.
-      finishGame();
-      return;
+    if (collision && hitCooldown <= 0) {
+      hitCooldown=1.25;
+      runHealth=Math.max(0,runHealth-1);
+      $('health-value').textContent=String(runHealth);
+      $('health-bar').style.width=(runHealth/3*100)+'%';
+      addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
+      scene.remove(item.mesh); traffic.splice(index,1);
+      if(runHealth<=0){finishGame();return;}
+      const warning=$('damage-warning');
+      warning.classList.add('show');
+      window.clearTimeout(updateTraffic.damageTimeout);
+      updateTraffic.damageTimeout=window.setTimeout(()=>warning.classList.remove('show'),700);
+      continue;
     }
 
     if (!item.checkedMiss && prevRelZ < 0 && nextRelZ >= 0) {
@@ -1426,6 +1509,7 @@ function updateTraffic(dt, previousPlayer) {
   }
 }
 function update(dt) {
+updateWeather(dt);
 for (let index = particles.length - 1; index >= 0; index--) {
 const p = particles[index];
 p.life -= dt;
@@ -1570,6 +1654,10 @@ clearTraffic();
 syncSettings();
 });
 $('night-toggle').addEventListener('click', () => setNight(!night));
+$('weather-toggle').addEventListener('click', () => {
+  const modes=['clear','rain','fog','snow'];
+  setWeather(modes[(modes.indexOf(weatherMode)+1)%modes.length]);
+});
 $('sound-toggle').addEventListener('click', () => {
 soundEnabled = !soundEnabled;
 save('tr-sound', soundEnabled);
@@ -1581,6 +1669,7 @@ syncSettings();
 createEnvironment();
 createPlayer();
 setNight(night);
+setWeather(weatherMode);
 renderGarage();
 refreshWallet();
 resize();
