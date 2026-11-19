@@ -1522,7 +1522,7 @@ function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
     // Begin with one officer. Every 3,000 metres adds two more officers.
-    const targetPoliceCount=1+Math.floor(score/500)*2;
+    const targetPoliceCount=1+Math.floor(score/300)*2;
     while(policeChasers.length<targetPoliceCount) {
       const index=policeChasers.length;
       const offset=((index%3)-1)*1.8;
@@ -1599,7 +1599,7 @@ const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 // Restore the more responsive player steering. The slower, gentler steering
 // remains on traffic bots so their lane changes look natural.
-const steeringPower = THREE.MathUtils.clamp(0.98 + actualSpeed / 155, 0.98, 1.95);
+const steeringPower = THREE.MathUtils.clamp(1.15 + actualSpeed / 135, 1.15, 2.25);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
   steer * spec.handling * steeringPower * (drifting ? 1.16 : 1),
