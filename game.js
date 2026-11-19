@@ -775,12 +775,13 @@ scenery.push(group);
 }
 }
 for (const side of [-1, 1]) {
-const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.45, 470), material(0x778389, 0.6, 0.4));
+for (let z = -220; z < 30; z += 18) {
+const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.45, 18), material(0x778389, 0.6, 0.4));
 rail.userData.roadLateral = side * 11.6;
 rail.position.y = 0.65;
-placeOnRoad(rail, side * 11.6, -105);
+placeOnRoad(rail, side * 11.6, z);
 scene.add(rail);
-for (let z = -220; z < 30; z += 18) {
+scenery.push(rail);
 const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.9, 8), material(0x9ba6a2, 0.6, 0.3));
 post.userData.roadLateral = side * 11.55;
 post.position.y = 0.45;
