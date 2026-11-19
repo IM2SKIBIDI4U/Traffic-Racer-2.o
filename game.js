@@ -823,16 +823,31 @@ function normalizeRoadsideModel(source, targetSize, receiveShadow = true) {
   return model;
 }
 
+let modularRoadTemplate = null;
+
 function normalizeRoadSegment(source) {
   const model = source.clone(true);
   model.updateWorldMatrix(true, true);
-  const bounds = new THREE.Box3().setFromObject(model);
-  const size = bounds.getSize(new THREE.Vector3());
+  let bounds = new THREE.Box3().setFromObject(model);
+  let size = bounds.getSize(new THREE.Vector3());
   if (size.x <= 0 || size.z <= 0) throw new Error('Road modular GLB has invalid dimensions');
-  // Fit one modular piece to the game's 18-unit road width and 50-unit segment.
-  model.scale.set(18 / size.x, 18 / size.x, 50 / size.z);
+
+  // Road pieces are authored with either X or Z as their long axis. Rotate
+  // the model when needed so every segment runs forward along world Z.
+  if (size.x > size.z) {
+    model.rotation.y += Math.PI / 2;
+    model.updateWorldMatrix(true, true);
+    bounds = new THREE.Box3().setFromObject(model);
+    size = bounds.getSize(new THREE.Vector3());
+  }
+
+  // Preserve the model's proportions. Do not stretch its length to an
+  // assumed value: derive the repeat distance from the actual GLB bounds.
+  const scale = 18 / size.x;
+  model.scale.multiplyScalar(scale);
   model.updateWorldMatrix(true, true);
   const scaled = new THREE.Box3().setFromObject(model);
+  const scaledSize = scaled.getSize(new THREE.Vector3());
   const center = scaled.getCenter(new THREE.Vector3());
   model.position.set(-center.x, -scaled.min.y, -center.z);
   model.traverse((object) => {
@@ -846,26 +861,28 @@ function normalizeRoadSegment(source) {
       if (mat) mat.needsUpdate = true;
     }
   });
+  model.userData.segmentLength = scaledSize.z;
   return model;
 }
 
-function replaceRoadWithModularModel(source) {
-  for (const oldRoad of roads) {
-    scene.remove(oldRoad);
-    oldRoad.traverse((object) => {
-      if (object.isMesh) object.geometry?.dispose();
-    });
-  }
+function buildModularRoadSegments() {
+  if (!modularRoadTemplate) return false;
+  for (const oldRoad of roads) scene.remove(oldRoad);
   roads.length = 0;
-  const template = normalizeRoadSegment(source);
-  roadSegmentLength = 50;
+  roadSegmentLength = modularRoadTemplate.userData.segmentLength;
   for (let i = 0; i < 10; i++) {
-    const segment = template.clone(true);
+    const segment = modularRoadTemplate.clone(true);
     segment.name = 'road-modular-segment';
-    segment.userData.roadStation = -25 - i * roadSegmentLength;
+    segment.userData.roadStation = -roadSegmentLength / 2 - i * roadSegmentLength;
     scene.add(segment);
     roads.push(segment);
   }
+  return true;
+}
+
+function replaceRoadWithModularModel(source) {
+  modularRoadTemplate = normalizeRoadSegment(source);
+  buildModularRoadSegments();
 }
 
 function loadRoadsideModels() {
@@ -874,10 +891,15 @@ function loadRoadsideModels() {
     gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
   });
 
-  // Keep the procedural curved road as the guaranteed driving surface.
-  // The modular GLB had an incompatible orientation/fit and could replace the
-  // visible road with geometry that appeared missing. Do not remove the fallback.
-  loadOne('small_red_gas_station.glb').then((source) => {
+  const roadPromise = loadOne('road_modular.glb').then((source) => {
+    replaceRoadWithModularModel(source);
+    console.info('Modular road loaded:', roadSegmentLength.toFixed(1), 'world units per segment');
+  }).catch((error) => {
+    // The procedural curved road created at startup remains as a safe fallback.
+    console.error('Could not load modular road GLB; keeping procedural road:', error);
+  });
+
+  const stationPromise = loadOne('small_red_gas_station.glb').then((source) => {
     for (const side of [-1, 1]) {
       const station = normalizeRoadsideModel(source, 17, true);
       station.name = 'red-gas-station';
@@ -888,7 +910,9 @@ function loadRoadsideModels() {
     }
   }).catch((error) => {
     console.error('Could not load red gas station GLB:', error);
-  }).finally(() => {
+  });
+
+  Promise.allSettled([roadPromise, stationPromise]).finally(() => {
     roadsideLoadFinished = true;
     finishLoadingScreen();
   });
@@ -1510,7 +1534,10 @@ for (const road of roads) {
   });
 }
 roads.length = 0;
-for (let i = 0; i < 8; i++) createRoad(-i * 50);
+if (!buildModularRoadSegments()) {
+  roadSegmentLength = 50;
+  for (let i = 0; i < 8; i++) createRoad(-i * 50);
+}
 clearTraffic();
 syncSettings();
 });
