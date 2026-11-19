@@ -355,7 +355,7 @@ function createPlayer() {
   player.userData.syntheticChildren = [...player.children];
   applyPlayerCar(selectedCar);
   const savedPaint=Number(load('tr-custom-paint','0'));
-  if(Number.isFinite(savedPaint) && savedPaint>0 && player.userData.paint) player.userData.paint.color.setHex(savedPaint);
+  if(Number.isFinite(savedPaint) && savedPaint>0) applyPlayerPaint(savedPaint);
   const lamp = new THREE.SpotLight(0xe5f5ff, 0, 55, Math.PI / 7, 0.55, 1.5);
   lamp.position.set(0, 1.5, 2.1);
   lamp.target.position.set(0, 0, -32);
@@ -679,6 +679,33 @@ function loadTrafficModels() {
     }
   );
 }
+function applyPlayerPaint(color) {
+  if (!player || !Number.isFinite(color) || color <= 0) return;
+  if (player.userData.paint) player.userData.paint.color.setHex(color);
+  const model = player.userData.starterModel;
+  if (!model) return;
+  if (!player.userData.paintTargets) {
+    const targets = [];
+    model.traverse((object) => {
+      if (!object.isMesh) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      const nextMaterials = materials.slice();
+      materials.forEach((source, index) => {
+        if (!source?.color) return;
+        const label = ((object.name || '') + ' ' + (source.name || '')).toLowerCase();
+        if (/glass|window|windshield|wheel|tire|tyre|rubber|light|lamp|interior|seat|chrome|metal|trim|mirror/.test(label)) return;
+        const copy = source.clone();
+        copy.color.setHex(color);
+        nextMaterials[index] = copy;
+        targets.push(copy);
+      });
+      object.material = Array.isArray(object.material) ? nextMaterials : nextMaterials[0];
+    });
+    player.userData.paintTargets = targets;
+  } else {
+    for (const target of player.userData.paintTargets) target.color.setHex(color);
+  }
+}
 function applyPlayerCar(carId) {
 if (!player) return;
 const spec = cars.find((car) => car.id === carId) || cars[0];
@@ -717,6 +744,7 @@ if (selectedCar === carId) {
 const model = prepareStarterModel(source);
 player.userData.starterModel = model;
 player.add(model);
+applyPlayerPaint(Number(load('tr-custom-paint',String(spec.color))));
 for (const child of player.userData.syntheticChildren || []) child.visible = false;
 }
 starterLoadFinished = true;
@@ -1002,7 +1030,7 @@ selectedCar = car.id;
 save('tr-car', selectedCar);
 applyPlayerCar(selectedCar);
 const customPaint=Number(load('tr-custom-paint','0'));
-if(player.userData.paint) player.userData.paint.color.setHex(customPaint>0?customPaint:car.color);
+applyPlayerPaint(customPaint>0?customPaint:car.color);
 refreshWallet();
 renderGarage();
 });
@@ -1030,7 +1058,7 @@ paintPanel.innerHTML='<h3>PAINT SHOP</h3>';
 for(const color of [0x1678c8,0xd54b3e,0x32a879,0xe9a33b,0xe8e8e8,0x252a32,0x8c65bd]){
   const swatch=document.createElement('button');swatch.className='paint-swatch';swatch.style.background='#'+color.toString(16).padStart(6,'0');swatch.setAttribute('aria-label','Choose paint');
   swatch.addEventListener('click',()=>{
-    if(player?.userData.paint) player.userData.paint.color.setHex(color);
+    applyPlayerPaint(color);
     save('tr-custom-paint',String(color));
     for(const button of paintPanel.querySelectorAll('.paint-swatch')) button.style.outline='none';
     swatch.style.outline='2px solid #ffffff';
