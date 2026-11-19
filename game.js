@@ -276,6 +276,17 @@ function createCar(color, isPlayer = false, style = 0) {
       wheelMeshes.push(wheel);
     }
   }
+  const signalLights = { left: [], right: [] };
+  for (const side of [-1, 1]) {
+    for (const z of [length * 0.49, -length * 0.49]) {
+      const indicator = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.09, 0.055), new THREE.MeshBasicMaterial({ color: 0xffa52f, toneMapped: false }));
+      indicator.position.set(side * (width * 0.43), 0.78, z);
+      indicator.visible = false;
+      group.add(indicator);
+      signalLights[side < 0 ? 'left' : 'right'].push(indicator);
+    }
+  }
+  group.userData.turnSignals = signalLights;
   const headlightMat = material(0xfff0cc, 0.25, 0.1, { emissive: 0x67521c });
   for (const side of [-1, 1]) {
     const head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 12, 8), headlightMat);
@@ -1415,17 +1426,25 @@ for (const ground of grounds) {
 }
 asphalt.offset.y = (asphalt.offset.y - move * 0.018) % 1;
 }
+function updateVehicleSignals(vehicle, direction, time) {
+  const signals = vehicle?.userData?.turnSignals;
+  if (!signals) return;
+  const blinking = Math.floor(time / 360) % 2 === 0;
+  for (const side of ['left', 'right']) {
+    for (const lamp of signals[side] || []) lamp.visible = direction === side && blinking;
+  }
+}
 function updatePlayer(dt) {
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const stats = effectiveCarStats(spec);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 // Steering builds smoothly, but still gives a clear response at highway speed.
-const steeringPower = THREE.MathUtils.clamp(0.78 + actualSpeed / 180, 0.78, 1.65);
+const steeringPower = THREE.MathUtils.clamp(0.34 + actualSpeed / 520, 0.34, 0.72);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
-  steer * stats.handling * steeringPower * (drifting ? 1.12 : 1),
-  drifting ? 3.6 : 5.5,
+  steer * stats.handling * steeringPower * (drifting ? 0.78 : 0.62),
+  drifting ? 2.0 : 1.65,
   dt
 );
 const previousLateral = playerLateral;
@@ -1440,7 +1459,8 @@ const steeringYaw = THREE.MathUtils.damp(
 );
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1), 5, dt);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.007 * (drifting ? 1.1 : 1), 2.8, dt);
+updateVehicleSignals(player, steer < 0 ? 'left' : steer > 0 ? 'right' : null, performance.now());
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
@@ -1558,10 +1578,12 @@ function updateTraffic(dt, previousPlayer) {
       item.laneVelocity = (item.lateralX - previousLateral) / Math.max(dt, 0.001);
       item.mesh.userData.laneSteer = THREE.MathUtils.damp(
         item.mesh.userData.laneSteer || 0,
-        THREE.MathUtils.clamp(-item.laneVelocity * 0.012, -0.12, 0.12),
-        3.2,
+        THREE.MathUtils.clamp(-item.laneVelocity * 0.009, -0.09, 0.09),
+        2.0,
         dt
       );
+      const signalDirection = item.targetLane < item.lateralX - 0.18 ? 'left' : item.targetLane > item.lateralX + 0.18 ? 'right' : null;
+      updateVehicleSignals(item.mesh, signalDirection, performance.now());
     }
 
     const botMps = item.botSpeed / 3.6 * 2;
