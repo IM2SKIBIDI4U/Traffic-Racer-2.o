@@ -12,7 +12,6 @@ scene.background = dayColor;
 scene.fog = new THREE.Fog(dayColor, 55, 250);
 // Set camera far clipping plane to 400 (instead of 180 or 200)
 const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 400);
-
 // Match fog so distant cars fade in smoothly instead of popping
 scene.fog = new THREE.Fog(0x0b1624, 140, 340);
 camera.position.set(0, 5.5, 15);
@@ -666,7 +665,7 @@ return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + M
 function spawnTraffic() {
   if (traffic.length >= 16) return;
   const lane = chooseTrafficLane();
-  const z = -260 - Math.random() * 60;
+const z = -210 - Math.random() * 30;
   if (traffic.some((item) => item.lane === lane && Math.abs(item.mesh.position.z - z) < 24)) return;
   const oncoming = roadMode === 'two-way' && lane < 0;
   const botSpeed = 60 + Math.random() * 100;
