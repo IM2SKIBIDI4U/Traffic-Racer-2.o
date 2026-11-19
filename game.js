@@ -797,6 +797,10 @@ $('nitro-fill').style.width = '100%';
 $('speed-lines').style.opacity = '0';
 running = true;
 paused = false;
+// Put a vehicle on the road immediately. The timed spawner continues adding
+// traffic afterward, but the player never starts with an empty highway.
+if (traffic.length === 0) spawnTraffic();
+spawnTimer = 0.75;
 showPage('');
 if (soundEnabled) {
 initAudio();
@@ -828,6 +832,9 @@ function finishGame() {
   steerVelocity = 0;
   nitroActive = false;
   cameraShake = 0.5;
+  // update() stops once the game ends, so apply the crash jolt here.
+  camera.position.x += (Math.random() - 0.5) * cameraShake;
+  cameraShake = 0;
 
   try {
     if (audioContext && engineGain) {
@@ -1166,7 +1173,17 @@ syncSettings();
 $('road-mode-toggle').addEventListener('click', () => {
 roadMode = roadMode === 'one-way' ? 'two-way' : 'one-way';
 save('tr-mode', roadMode);
-for (const road of roads) scene.remove(road);
+for (const road of roads) {
+  scene.remove(road);
+  road.traverse((object) => {
+    object.geometry?.dispose();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const mat of materials) {
+      // These materials are shared by the replacement road sections.
+      if (mat && mat !== roadMat && mat !== whiteLine && mat !== yellowLine) mat.dispose();
+    }
+  });
+}
 roads.length = 0;
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
 clearTraffic();
