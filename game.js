@@ -934,6 +934,15 @@ function chooseTrafficLane() {
 if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length)];
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
 }
+function attachTrafficTurnSignals(vehicle) {
+  const signals={left:[],right:[]};
+  for(const side of [-1,1]) for(const z of [2.05,-2.05]) {
+    const lamp=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.06),new THREE.MeshBasicMaterial({color:0xffa52f,toneMapped:false}));
+    lamp.position.set(side*0.82,0.82,z);lamp.visible=false;vehicle.add(lamp);
+    signals[side<0?'left':'right'].push(lamp);
+  }
+  vehicle.userData.turnSignals=signals;
+}
 function spawnTraffic() {
   const trafficLimit = Math.min(24, 16 + Math.min(8, Math.floor(score / 500)));
   if (traffic.length >= trafficLimit) return false;
@@ -975,6 +984,7 @@ function spawnTraffic() {
     car.rotation.y = Math.PI;
   }
   if (isPolice) car.rotation.y = Math.PI;
+  attachTrafficTurnSignals(car);
   const baseHeading = car.rotation.y;
   placeOnRoad(car, lane, z, baseHeading + (oncoming ? Math.PI : 0));
   if (night) {
@@ -1484,7 +1494,9 @@ function updatePoliceChase(dt) {
     while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.6:1.6);
     const playerMps=actualSpeed/3.6*2;let closest=Infinity;let closeBehind=false;
     for(const unit of policeChasers) {
-      const desired=205;
+      const phase=Math.floor(performance.now()/170)%2;
+      if(unit.mesh.userData.policeLightParts){unit.mesh.userData.policeLightParts[0].visible=phase===0;unit.mesh.userData.policeLightParts[1].visible=phase===1;}
+      const desired=Math.min(195,Math.max(125,actualSpeed+12));
       unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
       unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
       unit.lateral=THREE.MathUtils.damp(unit.lateral,THREE.MathUtils.clamp(playerLateral+(unit.lateral<playerLateral?-1.6:1.6),-7,7),0.65,dt);
