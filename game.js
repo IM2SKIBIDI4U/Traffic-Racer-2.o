@@ -1522,7 +1522,7 @@ function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
     // Begin with one officer. Every 3,000 metres adds two more officers.
-    const targetPoliceCount=1+Math.floor(score/3000)*2;
+    const targetPoliceCount=1+Math.floor(score/500)*2;
     while(policeChasers.length<targetPoliceCount) {
       const index=policeChasers.length;
       const offset=((index%3)-1)*1.8;
