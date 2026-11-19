@@ -105,6 +105,12 @@ let engineFilter;
 let nearMissChain = 0;
 let runHealth = 3;
 let hitCooldown = 0;
+let gameMode = load('tr-game-mode','escape');
+if (!['escape','police'].includes(gameMode)) gameMode = 'escape';
+let policeChasers = [];
+let policeCatchTime = 0;
+let escapeProgress = 0;
+let arrests = 0;
 let weatherMode = load('tr-weather', 'clear');
 let weatherClock = 0;
 let dayCycleClock = 0;
@@ -365,6 +371,8 @@ function createPlayer() {
   scene.add(player);
   player.userData.syntheticChildren = [...player.children];
   applyPlayerCar(selectedCar);
+  attachPlayerTurnSignals();
+  setPlayerPoliceLights(gameMode === 'police');
   const savedPaint=Number(load('tr-custom-paint','0'));
   if(Number.isFinite(savedPaint) && savedPaint>0) applyPlayerPaint(savedPaint);
   const lamp = new THREE.SpotLight(0xe5f5ff, 0, 55, Math.PI / 7, 0.55, 1.5);
@@ -943,7 +951,7 @@ function spawnTraffic() {
   const difficulty = Math.min(8, Math.floor(score / 500));
   const botSpeed = 60 + Math.random() * 100 + difficulty * 4.5;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
-  const isPolice = score > 250 && Math.random() < 0.055;
+  const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
   let car;
   const fleet = activeTrafficVehicles || [];
   if (isPolice) {
@@ -1132,6 +1140,8 @@ refreshDailyDate();
 for (const key of Object.keys(keys)) keys[key] = false;
 if ($('game-over')) $('game-over').style.display = '';
 score = 0;
+clearPoliceChase();
+setPlayerPoliceLights(gameMode === 'police');
 dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',dailyDate);
 runHealth=3; hitCooldown=0;
 $('health-value').textContent='3'; $('health-bar').style.width='100%';
@@ -1162,6 +1172,7 @@ paused = false;
 // Put a vehicle on the road immediately. The timed spawner continues adding
 // traffic afterward, but the player never starts with an empty highway.
 if (traffic.length === 0) spawnTraffic();
+if (gameMode === 'escape') { spawnPoliceChaser(-1.6); spawnPoliceChaser(1.6); }
 spawnTimer = 0.75;
 showPage('');
 if (soundEnabled) {
@@ -1189,6 +1200,8 @@ showNearMiss.timeout = window.setTimeout(() => toast.classList.remove('show'), 9
 }
 function finishGame() {
   if (!running) return;
+  const resultTitle=$('game-over-title');
+  if(resultTitle && !resultTitle.textContent)resultTitle.textContent=gameMode==='police'?'SHIFT COMPLETE':'CHASE OVER';
   running = false;
   paused = false;
   actualSpeed = 0;
@@ -1426,6 +1439,65 @@ for (const ground of grounds) {
 }
 asphalt.offset.y = (asphalt.offset.y - move * 0.018) % 1;
 }
+function attachPlayerTurnSignals() {
+  if (!player) return;
+  const signals={left:[],right:[]};
+  for(const side of [-1,1]) for(const z of [2.05,-2.05]) {
+    const lamp=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.1,0.06),new THREE.MeshBasicMaterial({color:0xffa52f,toneMapped:false}));
+    lamp.position.set(side*0.82,0.82,z);lamp.visible=false;player.add(lamp);
+    signals[side<0?'left':'right'].push(lamp);
+  }
+  player.userData.turnSignals=signals;
+}
+function addPoliceLightbar(vehicle) {
+  if(vehicle.userData.policeLightParts)return;
+  const base=new THREE.Mesh(new THREE.BoxGeometry(0.95,0.12,0.28),material(0x111820,0.32,0.35));
+  const red=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.14,0.25),new THREE.MeshBasicMaterial({color:0xff2038,toneMapped:false}));
+  const blue=new THREE.Mesh(new THREE.BoxGeometry(0.38,0.14,0.25),new THREE.MeshBasicMaterial({color:0x258bff,toneMapped:false}));
+  base.position.set(0,1.83,-0.12);red.position.set(-0.25,1.85,-0.12);blue.position.set(0.25,1.85,-0.12);
+  vehicle.add(base,red,blue);vehicle.userData.policeLightParts=[red,blue];
+}
+function setPlayerPoliceLights(active) {
+  if(!player)return;
+  if(active)addPoliceLightbar(player);
+  if(player.userData.policeLightParts)for(const lamp of player.userData.policeLightParts)lamp.visible=!!active;
+}
+function clearPoliceChase() {
+  for(const unit of policeChasers)scene.remove(unit.mesh);
+  policeChasers.length=0;policeCatchTime=0;escapeProgress=0;arrests=0;
+}
+function spawnPoliceChaser(offset=0) {
+  const car=createCar(0x172b46,false,2);car.name='police_pursuit_unit';addPoliceLightbar(car);scene.add(car);
+  const lateral=THREE.MathUtils.clamp(playerLateral+offset,-6.8,6.8),pathZ=30+policeChasers.length*5;
+  placeOnRoad(car,lateral,pathZ);policeChasers.push({mesh:car,pathZ,lateral,speed:0});
+}
+function updatePoliceChase(dt) {
+  if(!running)return;
+  if(gameMode==='escape') {
+    while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.6:1.6);
+    const playerMps=actualSpeed/3.6*2;let closest=Infinity;
+    for(const unit of policeChasers) {
+      const desired=Math.min(250,Math.max(92,actualSpeed+17));
+      unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
+      unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
+      unit.lateral=THREE.MathUtils.damp(unit.lateral,THREE.MathUtils.clamp(playerLateral+(unit.lateral<playerLateral?-1.6:1.6),-7,7),0.65,dt);
+      if(unit.pathZ>76)unit.pathZ=54+Math.random()*8;
+      placeOnRoad(unit.mesh,unit.lateral,unit.pathZ);
+      const gap=unit.pathZ-7;closest=Math.min(closest,Math.abs(gap));
+      if(gap<8&&gap>-1&&Math.abs(unit.lateral-playerLateral)<2.3)policeCatchTime+=dt;
+    }
+    if(closest>38)escapeProgress+=actualSpeed/3.6*dt;
+    else escapeProgress=Math.max(0,escapeProgress-dt*12);
+    policeCatchTime=Math.max(0,policeCatchTime-dt*0.45);
+    const label=$('chase-status');
+    if(label)label.textContent=policeCatchTime>0.2?'POLICE CLOSING · '+Math.min(100,Math.round(policeCatchTime/3*100))+'%':'ESCAPE DISTANCE · '+Math.floor(escapeProgress)+' M';
+    if(policeCatchTime>=3){$('game-over-title').textContent='CAUGHT!';finishGame();return;}
+    if(escapeProgress>=1000){$('game-over-title').textContent='YOU ESCAPED!';finishGame();}
+  } else {
+    const label=$('chase-status');if(label)label.textContent='VEHICLES STOPPED · '+arrests+'/5';
+    if(player.userData.policeLightParts){const phase=Math.floor(performance.now()/170)%2;player.userData.policeLightParts[0].visible=phase===0;player.userData.policeLightParts[1].visible=phase===1;}
+  }
+}
 function updateVehicleSignals(vehicle, direction, time) {
   const signals = vehicle?.userData?.turnSignals;
   if (!signals) return;
@@ -1440,26 +1512,27 @@ const stats = effectiveCarStats(spec);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 // Steering builds smoothly, but still gives a clear response at highway speed.
-const steeringPower = THREE.MathUtils.clamp(0.34 + actualSpeed / 520, 0.34, 0.72);
+const steeringPower = THREE.MathUtils.clamp(0.22 + actualSpeed / 900, 0.22, 0.48);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
-  steer * stats.handling * steeringPower * (drifting ? 0.78 : 0.62),
-  drifting ? 2.0 : 1.65,
+  steer * stats.handling * steeringPower * (drifting ? 0.38 : 0.3),
+  drifting ? 1.05 : 1.15,
   dt
 );
 const previousLateral = playerLateral;
+steerVelocity=THREE.MathUtils.clamp(steerVelocity,-1.15,1.15);
 playerLateral = THREE.MathUtils.clamp(playerLateral + steerVelocity * dt, -8, 8);
 if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
 const lateralMotion = (playerLateral - previousLateral) / Math.max(dt, 0.001);
 const steeringYaw = THREE.MathUtils.damp(
   player.userData.steeringYaw || 0,
-  -THREE.MathUtils.clamp(lateralMotion * 0.018, -0.16, 0.16),
-  5.5,
+  -THREE.MathUtils.clamp(lateralMotion * 0.012, -0.1, 0.1),
+  3.2,
   dt
 );
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.007 * (drifting ? 1.1 : 1), 2.8, dt);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.004 * (drifting ? 1.1 : 1), 1.8, dt);
 updateVehicleSignals(player, steer < 0 ? 'left' : steer > 0 ? 'right' : null, performance.now());
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
@@ -1574,12 +1647,12 @@ function updateTraffic(dt, previousPlayer) {
       const previousLateral = item.lateralX;
       // Gentle lane changes: build lateral speed gradually and steer the body
       // into the move instead of snapping toward the target lane.
-      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 1.35, dt);
+      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 0.72, dt);
       item.laneVelocity = (item.lateralX - previousLateral) / Math.max(dt, 0.001);
       item.mesh.userData.laneSteer = THREE.MathUtils.damp(
         item.mesh.userData.laneSteer || 0,
-        THREE.MathUtils.clamp(-item.laneVelocity * 0.009, -0.09, 0.09),
-        2.0,
+        THREE.MathUtils.clamp(-item.laneVelocity * 0.006, -0.055, 0.055),
+        1.3,
         dt
       );
       const signalDirection = item.targetLane < item.lateralX - 0.18 ? 'left' : item.targetLane > item.lateralX + 0.18 ? 'right' : null;
@@ -1654,6 +1727,13 @@ function updateTraffic(dt, previousPlayer) {
     const dx = closestDx;
 
     if (collision && hitCooldown <= 0) {
+      if (gameMode === 'police') {
+        arrests++;awardCredits(20);scene.remove(item.mesh);traffic.splice(index,1);
+        const toast=$('near-miss');toast.textContent='VEHICLE STOPPED · +20';toast.classList.add('show');
+        window.clearTimeout(updateTraffic.damageTimeout);updateTraffic.damageTimeout=window.setTimeout(()=>toast.classList.remove('show'),850);
+        if(arrests>=5){$('game-over-title').textContent='SHIFT COMPLETE!';finishGame();return;}
+        continue;
+      }
       hitCooldown=1.25;
       runHealth=Math.max(0,runHealth-1);
       $('health-value').textContent=String(runHealth);
@@ -1713,6 +1793,7 @@ addSparks(player.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 
 updateWorld(dt);
 updatePlayer(dt);
 updateTraffic(dt, previousPlayer);
+updatePoliceChase(dt);
 score += actualSpeed / 3.6 * dt;
 updateProgression();
 $('score').textContent = Math.floor(score).toLocaleString();
