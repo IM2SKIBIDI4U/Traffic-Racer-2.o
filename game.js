@@ -258,6 +258,43 @@ function createCar(color, isPlayer = false, style = 0) {
   return group;
 }
 
+
+function createTrafficVariants() {
+  const specs = [
+    { color: 0xd9dfe2, style: 3, kind: 'delivery' },
+    { color: 0x273b52, style: 2, kind: 'taxi' },
+    { color: 0x7b858b, style: 3, kind: 'utility' },
+    { color: 0x9b3f32, style: 2, kind: 'roof-rack' },
+    { color: 0xe0e0d8, style: 0, kind: 'fleet' }
+  ];
+  const trim = material(0x9aa6aa, 0.32, 0.72);
+  const yellow = material(0xf2c230, 0.5, 0.08);
+  for (const spec of specs) {
+    const car = createCar(spec.color, false, spec.style);
+    car.name = 'procedural_' + spec.kind;
+    if (spec.kind === 'delivery') {
+      const cargo = new THREE.Mesh(new THREE.BoxGeometry(1.72, 1.12, 1.65), material(0xe4e6e4, 0.82));
+      cargo.position.set(0, 1.45, -0.55);
+      car.add(cargo);
+    } else if (spec.kind === 'taxi') {
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.28), yellow);
+      sign.position.set(0, 1.91, -0.18);
+      car.add(sign);
+    } else if (spec.kind === 'utility' || spec.kind === 'roof-rack') {
+      for (const z of [-0.62, 0.38]) {
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(1.42, 0.06, 0.08), trim);
+        bar.position.set(0, 1.9, z);
+        car.add(bar);
+      }
+    } else {
+      const bumper = new THREE.Mesh(new THREE.BoxGeometry(1.72, 0.13, 0.12), trim);
+      bumper.position.set(0, 0.48, -2.05);
+      car.add(bumper);
+    }
+    trafficVehicles.push(car);
+  }
+}
+
 function createPlayer() {
   const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
   player = createCar(spec.color, true, spec.modelStyle);
@@ -565,6 +602,7 @@ function loadTrafficModels() {
         });
 
         if (!trafficVehicles.length) throw new Error('No traffic vehicle models were found');
+        createTrafficVariants();
       } catch (error) {
         trafficVehicles.length = 0;
         console.error('Could not prepare traffic_rider_npc_vehicles.glb:', error);
@@ -577,6 +615,7 @@ function loadTrafficModels() {
     (event) => updateLoadingScreen(event, 'traffic models'),
     (error) => {
       console.error('Could not load traffic_rider_npc_vehicles.glb:', error);
+      createTrafficVariants();
       $('loading-message').textContent = 'Traffic models unavailable; using fallback vehicles.';
       trafficLoadFinished = true;
       finishLoadingScreen();
@@ -633,6 +672,77 @@ finishLoadingScreen();
 });
 }
 }
+
+const roadsideMetal = material(0x68777d, 0.72, 0.48);
+const roadsideWhite = material(0xd8dedb, 0.82);
+const roadsideYellow = material(0xe9bd45, 0.72);
+const roadsideGlass = material(0x355563, 0.34, 0.22);
+function addRoadsideDetails() {
+  for (let z = -225; z <= 35; z += 52) {
+    for (const side of [-1, 1]) {
+      const lamp = new THREE.Group();
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.11, 6.2, 7), roadsideMetal);
+      pole.position.y = 3.1;
+      lamp.add(pole);
+      const arm = new THREE.Mesh(new THREE.BoxGeometry(1.25, 0.09, 0.09), roadsideMetal);
+      arm.position.set(-side * 0.52, 5.95, 0);
+      lamp.add(arm);
+      const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.32), roadsideWhite);
+      head.position.set(-side * 1.08, 5.88, 0);
+      lamp.add(head);
+      lamp.position.set(side * 12.7, 0, z);
+      lamp.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+      scene.add(lamp);
+      scenery.push(lamp);
+
+      if (Math.abs(z) % 104 < 1) {
+        const sign = new THREE.Group();
+        const post = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.07, 2.5, 6), roadsideMetal);
+        post.position.y = 1.25;
+        sign.add(post);
+        const board = new THREE.Mesh(new THREE.BoxGeometry(1.45, 0.86, 0.1), roadsideGlass);
+        board.position.y = 2.65;
+        sign.add(board);
+        const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.07, 0.025), roadsideYellow);
+        stripe.position.set(0, 2.65, 0.065);
+        sign.add(stripe);
+        sign.position.set(side * 13.6, 0, z - 13);
+        sign.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+        scene.add(sign);
+        scenery.push(sign);
+      }
+    }
+  }
+
+  for (const side of [-1, 1]) {
+    const station = new THREE.Group();
+    const building = new THREE.Mesh(new THREE.BoxGeometry(7.2, 3.1, 5.2), material(0xb8b8ad, 0.9));
+    building.position.set(0, 1.55, 0);
+    station.add(building);
+    const canopy = new THREE.Mesh(new THREE.BoxGeometry(8.4, 0.28, 3.4), roadsideYellow);
+    canopy.position.set(0, 3.25, 2.5);
+    station.add(canopy);
+    for (const x of [-3.1, 3.1]) {
+      const window = new THREE.Mesh(new THREE.BoxGeometry(0.08, 1.15, 1.8), roadsideGlass);
+      window.position.set(x, 1.8, 2.64);
+      station.add(window);
+    }
+    for (const x of [-2.25, 0, 2.25]) {
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.55, 1.1, 0.48), roadsideWhite);
+      pump.position.set(x, 0.55, 4.7);
+      station.add(pump);
+      const display = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.2, 0.035), roadsideGlass);
+      display.position.set(x, 0.75, 4.95);
+      station.add(display);
+    }
+    station.position.set(side * 23, 0, -115);
+    station.scale.setScalar(0.9);
+    station.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    scene.add(station);
+    scenery.push(station);
+  }
+}
+
 function createEnvironment() {
 for (let i = 0; i < 8; i++) createRoad(-i * 50);
 for (let i = 0; i < 3; i++) {
@@ -676,6 +786,8 @@ scene.add(post);
 scenery.push(post);
 }
 }
+}
+  addRoadsideDetails();
 }
 function chooseTrafficLane() {
 if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length)];
