@@ -85,6 +85,7 @@ let soundEnabled = load('tr-sound', 'true') !== 'false';
 let night = load('tr-night', 'false') === 'true';
 
 let player;
+let playerLateral = lanes.at(2);
 let running = false;
 let paused = false;
 let score = 0;
@@ -128,6 +129,22 @@ const roadMat = new THREE.MeshStandardMaterial({ map: asphalt, roughness: 0.94 }
 const whiteLine = material(0xe4e1d3, 0.82);
 const yellowLine = material(0xf0c94a, 0.8);
 const grassMat = material(0x607a5d, 1);
+
+// The road follows a continuous centerline. Positive lateral values are to the right.
+function roadCenterX(z) {
+  return 18 * Math.sin((z + 55) / 235) + 6 * Math.sin(z / 112);
+}
+function roadHeading(z) {
+  const delta = 0.5;
+  const slope = (roadCenterX(z + delta) - roadCenterX(z - delta)) / (2 * delta);
+  return Math.atan(slope);
+}
+function placeOnRoad(object, lateral, z, headingOffset = 0) {
+  const heading = roadHeading(z);
+  object.position.x = roadCenterX(z) + lateral * Math.cos(heading);
+  object.position.z = z - lateral * Math.sin(heading);
+  object.rotation.y = heading + headingOffset;
+}
 
 function createRoad(z) {
   const group = new THREE.Group();
@@ -298,7 +315,8 @@ function createTrafficVariants() {
 function createPlayer() {
   const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
   player = createCar(spec.color, true, spec.modelStyle);
-  player.position.set(lanes.at(2), 0, 7);
+  playerLateral = lanes.at(2);
+  placeOnRoad(player, playerLateral, 7);
   scene.add(player);
   player.userData.syntheticChildren = [...player.children];
   applyPlayerCar(selectedCar);
@@ -319,6 +337,7 @@ let startupLoadFinished = false;
 let starterLoadFinished = false;
 let trafficLoadFinished = false;
 let roadsideLoadFinished = false;
+let roadSegmentLength = 50;
 
 function updateLoadingScreen(event, asset = 'vehicle model') {
 const progress = event.total ? Math.floor(event.loaded / event.total * 100) : null;
@@ -691,7 +710,8 @@ function addRoadsideDetails() {
       const head = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.16, 0.32), roadsideWhite);
       head.position.set(-side * 1.08, 5.88, 0);
       lamp.add(head);
-      lamp.position.set(side * 12.7, 0, z);
+      lamp.userData.roadLateral = side * 12.7;
+      placeOnRoad(lamp, side * 12.7, z);
       lamp.traverse((o) => { if (o.isMesh) o.castShadow = false; });
       scene.add(lamp);
       scenery.push(lamp);
@@ -707,7 +727,8 @@ function addRoadsideDetails() {
         const stripe = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.07, 0.025), roadsideYellow);
         stripe.position.set(0, 2.65, 0.065);
         sign.add(stripe);
-        sign.position.set(side * 13.6, 0, z - 13);
+        sign.userData.roadLateral = side * 13.6;
+        placeOnRoad(sign, side * 13.6, z - 13);
         sign.traverse((o) => { if (o.isMesh) o.castShadow = false; });
         scene.add(sign);
         scenery.push(sign);
@@ -745,18 +766,24 @@ const building = new THREE.Mesh(new THREE.BoxGeometry(3, height, 4), material(0x
 building.position.y = height / 2;
 group.add(building);
 }
-group.position.set(side * (14 + Math.random() * 2), 0, z + Math.random() * 7);
+const lateral = side * (14 + Math.random() * 2);
+group.userData.roadLateral = lateral;
+placeOnRoad(group, lateral, z + Math.random() * 7);
 scene.add(group);
 scenery.push(group);
 }
 }
 for (const side of [-1, 1]) {
 const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.45, 470), material(0x778389, 0.6, 0.4));
-rail.position.set(side * 11.6, 0.65, -105);
+rail.userData.roadLateral = side * 11.6;
+rail.position.y = 0.65;
+placeOnRoad(rail, side * 11.6, -105);
 scene.add(rail);
 for (let z = -220; z < 30; z += 18) {
 const post = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.9, 8), material(0x9ba6a2, 0.6, 0.3));
-post.position.set(side * 11.55, 0.45, z);
+post.userData.roadLateral = side * 11.55;
+post.position.y = 0.45;
+placeOnRoad(post, side * 11.55, z);
 scene.add(post);
 scenery.push(post);
 }
@@ -794,23 +821,77 @@ function normalizeRoadsideModel(source, targetSize, receiveShadow = true) {
   return model;
 }
 
+function normalizeRoadSegment(source) {
+  const model = source.clone(true);
+  model.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(model);
+  const size = bounds.getSize(new THREE.Vector3());
+  if (size.x <= 0 || size.z <= 0) throw new Error('Road modular GLB has invalid dimensions');
+  // Fit one modular piece to the game's 18-unit road width and 50-unit segment.
+  model.scale.set(18 / size.x, 18 / size.x, 50 / size.z);
+  model.updateWorldMatrix(true, true);
+  const scaled = new THREE.Box3().setFromObject(model);
+  const center = scaled.getCenter(new THREE.Vector3());
+  model.position.set(-center.x, -scaled.min.y, -center.z);
+  model.traverse((object) => {
+    if (!object.isMesh) return;
+    object.receiveShadow = true;
+    object.castShadow = false;
+    object.frustumCulled = true;
+    const mats = Array.isArray(object.material) ? object.material : [object.material];
+    for (const mat of mats) {
+      if (mat?.map) mat.map.colorSpace = THREE.SRGBColorSpace;
+      if (mat) mat.needsUpdate = true;
+    }
+  });
+  return model;
+}
+
+function replaceRoadWithModularModel(source) {
+  for (const oldRoad of roads) {
+    scene.remove(oldRoad);
+    oldRoad.traverse((object) => {
+      if (object.isMesh) object.geometry?.dispose();
+    });
+  }
+  roads.length = 0;
+  const template = normalizeRoadSegment(source);
+  roadSegmentLength = 50;
+  for (let i = 0; i < 10; i++) {
+    const segment = template.clone(true);
+    segment.name = 'road-modular-segment';
+    segment.userData.roadStation = -25 - i * roadSegmentLength;
+    scene.add(segment);
+    roads.push(segment);
+  }
+}
+
 function loadRoadsideModels() {
   const base = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/';
   const loadOne = (file) => new Promise((resolve, reject) => {
     gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
   });
 
-  loadOne('small_red_gas_station.glb').then((source) => {
-    for (const side of [-1, 1]) {
-      const station = normalizeRoadsideModel(source, 17, true);
-      station.name = 'red-gas-station';
-      station.position.set(side * 23, 0, -105);
-      scene.add(station);
-      scenery.push(station);
-    }
-  }).catch((error) => {
-    console.error('Could not load red gas station GLB:', error);
-  }).finally(() => {
+  Promise.all([
+    loadOne('road_modular.glb').then((source) => {
+      replaceRoadWithModularModel(source);
+      console.info('Loaded road_modular.glb as the driving surface.');
+    }).catch((error) => {
+      console.error('Could not load road_modular.glb; keeping the procedural road fallback:', error);
+    }),
+    loadOne('small_red_gas_station.glb').then((source) => {
+      for (const side of [-1, 1]) {
+        const station = normalizeRoadsideModel(source, 17, true);
+        station.name = 'red-gas-station';
+        station.userData.roadLateral = side * 23;
+        placeOnRoad(station, side * 23, -105);
+        scene.add(station);
+        scenery.push(station);
+      }
+    }).catch((error) => {
+      console.error('Could not load red gas station GLB:', error);
+    })
+  ]).finally(() => {
     roadsideLoadFinished = true;
     finishLoadingScreen();
   });
@@ -847,8 +928,8 @@ function spawnTraffic() {
     // The procedural model's headlights are on +Z; rotate it to face forward (-Z).
     car.rotation.y = Math.PI;
   }
-  car.position.set(lane, 0, z);
-  if (oncoming) car.rotation.y += Math.PI;
+  const baseHeading = car.rotation.y;
+  placeOnRoad(car, lane, z, baseHeading + (oncoming ? Math.PI : 0));
   if (night) {
     const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
     light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
@@ -866,6 +947,8 @@ function spawnTraffic() {
   }
   traffic.push({
     mesh: car, lane, oncoming, botSpeed,
+    lateralX: lane,
+    baseHeading,
     targetSpeed: botSpeed,
     targetLane: lane,
     laneChangeCooldown: 2 + Math.random() * 5,
@@ -979,8 +1062,9 @@ burstTimer = 0;
 burstCooldown = 8 + Math.random() * 7;
 cameraShake = 0;
 nearMissChain = 0;
-player.position.set(lanes.at(2), 0, 7);
-player.rotation.set(0, 0, 0);
+playerLateral = lanes.at(2);
+placeOnRoad(player, playerLateral, 7);
+player.rotation.set(0, 0, roadHeading(7));
 updateCamera(0, 0);
 clearTraffic();
 for (const particle of particles) scene.remove(particle.mesh);
@@ -1133,16 +1217,23 @@ life: 0.4 + Math.random() * 0.4
 function updateWorld(dt) {
 const move = actualSpeed / 3.6 * 2 * dt;
 for (const road of roads) {
-road.position.z += move;
-if (road.position.z >= 50) road.position.z -= roads.length * 50;
+  const station = (road.userData.roadStation ?? road.position.z) + move;
+  const loopLength = roads.length * roadSegmentLength;
+  road.userData.roadStation = station >= 25 ? station - loopLength : station;
+  placeOnRoad(road, 0, road.userData.roadStation);
 }
 for (const prop of scenery) {
-prop.position.z += move;
-if (prop.position.z > 28) prop.position.z -= 270;
+  prop.position.z += move;
+  if (prop.position.z > 28) prop.position.z -= 270;
+  const lateral = prop.userData.roadLateral ?? prop.position.x;
+  prop.userData.roadLateral = lateral;
+  const y = prop.position.y;
+  placeOnRoad(prop, lateral, prop.position.z);
+  prop.position.y = y;
 }
 for (const ground of grounds) {
-ground.position.z += move;
-if (ground.position.z > 350) ground.position.z -= grounds.length * 600;
+  ground.position.z += move;
+  if (ground.position.z > 350) ground.position.z -= grounds.length * 600;
 }
 asphalt.offset.y = (asphalt.offset.y - move * 0.018) % 1;
 }
@@ -1151,9 +1242,11 @@ const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 steerVelocity = THREE.MathUtils.damp(steerVelocity, steer * spec.handling * (drifting ? 1.16 : 1), drifting ? 4 : 8, dt);
-player.position.x = THREE.MathUtils.clamp(player.position.x + steerVelocity * dt, -8, 8);
+playerLateral = THREE.MathUtils.clamp(playerLateral + steerVelocity * dt, -8, 8);
+const steeringYaw = THREE.MathUtils.damp(player.userData.steeringYaw || 0, -steer * (drifting ? 0.1 : 0.04), 7, dt);
+player.userData.steeringYaw = steeringYaw;
+placeOnRoad(player, playerLateral, 7, steeringYaw);
 player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -steerVelocity * 0.022 * (drifting ? 0.7 : 1), 7, dt);
-player.rotation.y = THREE.MathUtils.damp(player.rotation.y, -steer * (drifting ? 0.1 : 0.04), 7, dt);
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
@@ -1215,7 +1308,7 @@ function updateTraffic(dt, previousPlayer) {
         ? Math.max(35, leader.botSpeed - (22 - gap) * 2.2)
         : desiredCruise;
       item.botSpeed = THREE.MathUtils.damp(item.botSpeed, Math.min(desiredCruise, followingSpeed), 1.8, dt);
-      item.mesh.position.x = THREE.MathUtils.damp(item.mesh.position.x, item.targetLane, 2.8, dt);
+      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 2.8, dt);
     }
 
     const botMps = item.botSpeed / 3.6 * 2;
@@ -1238,6 +1331,11 @@ function updateTraffic(dt, previousPlayer) {
       const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
       follower.mesh.position.z = Math.min(follower.mesh.position.z, leader.mesh.position.z - safeGap);
     }
+  }
+  // Convert each bot's lane-relative position onto the same curved centerline.
+  for (const item of traffic) {
+    const headingOffset = item.baseHeading + (item.oncoming ? Math.PI : 0);
+    placeOnRoad(item.mesh, item.lateralX, item.mesh.position.z, headingOffset);
   }
 
   for (let index = traffic.length - 1; index >= 0; index--) {
