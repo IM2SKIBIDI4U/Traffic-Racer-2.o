@@ -800,41 +800,17 @@ function loadRoadsideModels() {
     gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
   });
 
-  Promise.allSettled([
-    loadOne('highway_lnterchange_overpass.glb'),
-    loadOne('small_red_gas_station.glb')
-  ]).then(([overpassResult, stationResult]) => {
-    if (overpassResult.status === 'fulfilled') {
-      try {
-        const overpass = normalizeRoadsideModel(overpassResult.value, 64, false);
-        overpass.name = 'highway-interchange';
-        overpass.position.set(0, 0, -165);
-        scene.add(overpass);
-        scenery.push(overpass);
-      } catch (error) {
-        console.error('Could not configure highway interchange:', error);
-      }
-    } else {
-      console.error('Could not load highway interchange GLB:', overpassResult.reason);
+  loadOne('small_red_gas_station.glb').then((source) => {
+    for (const side of [-1, 1]) {
+      const station = normalizeRoadsideModel(source, 17, true);
+      station.name = 'red-gas-station';
+      station.position.set(side * 23, 0, -105);
+      scene.add(station);
+      scenery.push(station);
     }
-
-    if (stationResult.status === 'fulfilled') {
-      try {
-        const source = stationResult.value;
-        for (const side of [-1, 1]) {
-          const station = normalizeRoadsideModel(source, 17, true);
-          station.name = 'red-gas-station';
-          station.position.set(side * 23, 0, -105);
-          scene.add(station);
-          scenery.push(station);
-        }
-      } catch (error) {
-        console.error('Could not configure red gas station:', error);
-      }
-    } else {
-      console.error('Could not load red gas station GLB:', stationResult.reason);
-    }
-
+  }).catch((error) => {
+    console.error('Could not load red gas station GLB:', error);
+  }).finally(() => {
     roadsideLoadFinished = true;
     finishLoadingScreen();
   });
