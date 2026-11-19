@@ -49,6 +49,7 @@ const scenery = [];
 const grounds = [];
 const traffic = [];
 const trafficVehicles = [];
+let activeTrafficVehicles = null;
 const particles = [];
 const lanes = [-6.75, -2.25, 2.25, 6.75];
 const keys = { left: false, right: false, accelerate: false, brake: false, drift: false, nitro: false };
@@ -132,7 +133,7 @@ const grassMat = material(0x607a5d, 1);
 
 // The road follows a continuous centerline. Positive lateral values are to the right.
 function roadCenterX(z) {
-  return 18 * Math.sin((z + 55) / 235) + 6 * Math.sin(z / 112);
+  return 32 * Math.sin((z + 45) / 95) + 14 * Math.sin(z / 43) + 5 * Math.sin((z - 18) / 23);
 }
 function roadHeading(z) {
   const delta = 0.5;
@@ -147,34 +148,34 @@ function placeOnRoad(object, lateral, z, headingOffset = 0) {
   object.rotation.y = heading + headingOffset;
 }
 
-function createRoad(z) {
+function createRoad(z, length = roadSegmentLength) {
   const group = new THREE.Group();
-  const slab = new THREE.Mesh(new THREE.BoxGeometry(18, 0.22, 50), roadMat);
+  const slab = new THREE.Mesh(new THREE.BoxGeometry(18, 0.22, length), roadMat);
   slab.position.y = -0.02;
   slab.receiveShadow = true;
   group.add(slab);
   for (const x of [-9, 9]) {
-    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, 50), whiteLine);
+    const edge = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.04, length), whiteLine);
     edge.position.set(x, 0.105, 0);
     group.add(edge);
   }
   for (const x of [-4.5, 0, 4.5]) {
     if (roadMode === 'two-way' && x === 0) {
       for (const offset of [-0.12, 0.12]) {
-        const line = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, 50), yellowLine);
+        const line = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.045, length), yellowLine);
         line.position.set(offset, 0.11, 0);
         group.add(line);
       }
     } else {
-      for (let dz = -22; dz < 25; dz += 10) {
-        const dash = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 4.8), whiteLine);
+      for (let dz = -length / 2 + 2; dz < length / 2; dz += 8) {
+        const dash = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 3.8), whiteLine);
         dash.position.set(x, 0.11, dz);
         group.add(dash);
       }
     }
   }
   for (const side of [-1, 1]) {
-    const shoulder = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, 50), material(0x8c9290, 0.9));
+    const shoulder = new THREE.Mesh(new THREE.BoxGeometry(3, 0.12, length), material(0x8c9290, 0.9));
     shoulder.position.set(side * 10.5, -0.06, 0);
     group.add(shoulder);
   }
@@ -338,7 +339,7 @@ let startupLoadFinished = false;
 let starterLoadFinished = false;
 let trafficLoadFinished = false;
 let roadsideLoadFinished = false;
-let roadSegmentLength = 50;
+let roadSegmentLength = 20;
 
 function updateLoadingScreen(event, asset = 'vehicle model') {
 const progress = event.total ? Math.floor(event.loaded / event.total * 100) : null;
@@ -356,11 +357,11 @@ function finishLoadingScreen() {
   // Wait for both the player car and traffic fleet before allowing gameplay.
   // This prevents fallback traffic from being replaced by loaded GLB models
   // after the race has already started.
-  if (startupLoadFinished || !starterLoadFinished || !trafficLoadFinished || !roadsideLoadFinished) return;
+  if (startupLoadFinished || !starterLoadFinished || !roadsideLoadFinished) return;
   startupLoadFinished = true;
   $('loading-fill').style.width = '100%';
   $('loading-progress').setAttribute('aria-valuenow', '100');
-  $('loading-message').textContent = 'Vehicles and environment ready!';
+  $('loading-message').textContent = 'Ready! Traffic continues loading in the background.';
   $('loading-screen').classList.add('hidden');
   $('main-menu').classList.remove('hidden');
 }
@@ -741,8 +742,54 @@ function addRoadsideDetails() {
 
 }
 
+function addRoadsideLandmarks() {
+  const frameMat = material(0x303b43, 0.72, 0.25);
+  const billboardMats = [0x287d9a, 0xb85b3c, 0x637d45, 0x554b86].map((color) => material(color, 0.78));
+  const concrete = material(0x8b9292, 0.95);
+  const glass = material(0x6f9eaa, 0.3, 0.12, { transparent: true, opacity: 0.55 });
+  for (let index = 0, z = -205; z <= 15; z += 55, index++) {
+    const side = index % 2 === 0 ? -1 : 1;
+    const billboard = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.22, 4.2, 0.22), frameMat);
+    post.position.y = 2.1;
+    billboard.add(post);
+    const board = new THREE.Mesh(new THREE.BoxGeometry(4.6, 2.15, 0.18), billboardMats[index % billboardMats.length]);
+    board.position.set(0.55, 4.25, 0);
+    billboard.add(board);
+    billboard.userData.roadLateral = side * 19;
+    placeOnRoad(billboard, side * 19, z);
+    billboard.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+    scene.add(billboard);
+    scenery.push(billboard);
+
+    if (index % 2 === 1) {
+      const shelter = new THREE.Group();
+      const base = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.18, 2.2), concrete);
+      base.position.y = 0.09;
+      shelter.add(base);
+      const roof = new THREE.Mesh(new THREE.BoxGeometry(4.5, 0.18, 2.5), frameMat);
+      roof.position.y = 2.55;
+      shelter.add(roof);
+      for (const x of [-1.9, 1.9]) {
+        const support = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.35, 0.12), frameMat);
+        support.position.set(x, 1.25, -0.9);
+        shelter.add(support);
+      }
+      const back = new THREE.Mesh(new THREE.BoxGeometry(3.8, 1.9, 0.08), glass);
+      back.position.set(0, 1.35, -0.95);
+      shelter.add(back);
+      shelter.userData.roadLateral = -side * 18;
+      placeOnRoad(shelter, -side * 18, z - 24);
+      shelter.traverse((o) => { if (o.isMesh) o.castShadow = false; });
+      scene.add(shelter);
+      scenery.push(shelter);
+    }
+  }
+}
+
 function createEnvironment() {
-for (let i = 0; i < 8; i++) createRoad(-i * 50);
+roadSegmentLength = 20;
+for (let i = 0; i < 14; i++) createRoad(-i * roadSegmentLength);
 for (let i = 0; i < 3; i++) {
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(240, 600), grassMat);
 ground.rotation.x = -Math.PI / 2;
@@ -792,6 +839,7 @@ scenery.push(post);
 }
 }
   addRoadsideDetails();
+  addRoadsideLandmarks();
 }
 
 // Load the two user-provided roadside GLBs. Normalize their pivots and sizes so
@@ -891,32 +939,9 @@ function replaceRoadWithModularModel(source) {
 }
 
 function loadRoadsideModels() {
-  const base = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/';
-  const loadOne = (file) => new Promise((resolve, reject) => {
-    gltfLoader.load(base + file, (gltf) => resolve(gltf.scene), undefined, reject);
-  });
-
-  // road_modular.glb is a multi-piece road layout, not one isolated
-  // repeatable segment. Repeating the entire scene creates parallel duplicate
-  // roads, so keep the continuous curved road created by createEnvironment()
-  // until an individual segment can be selected from that asset.
-  const stationPromise = loadOne('small_red_gas_station.glb').then((source) => {
-    for (const side of [-1, 1]) {
-      const station = normalizeRoadsideModel(source, 17, true);
-      station.name = 'red-gas-station';
-      station.userData.roadLateral = side * 23;
-      placeOnRoad(station, side * 23, -105);
-      scene.add(station);
-      scenery.push(station);
-    }
-  }).catch((error) => {
-    console.error('Could not load red gas station GLB:', error);
-  });
-
-  stationPromise.finally(() => {
-    roadsideLoadFinished = true;
-    finishLoadingScreen();
-  });
+  // All roadside props are procedural; no large gas-station asset is downloaded.
+  roadsideLoadFinished = true;
+  finishLoadingScreen();
 }
 
 function chooseTrafficLane() {
@@ -939,8 +964,9 @@ function spawnTraffic() {
   const botSpeed = 60 + Math.random() * 100;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   let car;
-  if (trafficVehicles.length) {
-    const source = trafficVehicles[Math.floor(Math.random() * trafficVehicles.length)];
+  const fleet = activeTrafficVehicles || [];
+  if (fleet.length) {
+    const source = fleet[Math.floor(Math.random() * fleet.length)];
     car = source.clone(true);
     car.userData.wheels = getTrafficWheels(car);
     car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
@@ -976,6 +1002,7 @@ function spawnTraffic() {
     targetLane: lane,
     laneChangeCooldown: 2 + Math.random() * 5,
     drivingStyle: Math.random(),
+    playerReactionCooldown: 0.4 + Math.random() * 1.2,
     checkedMiss: false,
     previousZ: z
   });
@@ -1090,6 +1117,8 @@ placeOnRoad(player, playerLateral, 7);
 player.rotation.set(0, roadHeading(7), 0);
 updateCamera(0, 0);
 clearTraffic();
+// Keep one consistent vehicle fleet for the whole run if the GLB finishes loading mid-race.
+activeTrafficVehicles = trafficVehicles.length ? trafficVehicles.slice() : null;
 for (const particle of particles) scene.remove(particle.mesh);
 particles.length = 0;
 $('score').textContent = '0';
@@ -1242,7 +1271,8 @@ const move = actualSpeed / 3.6 * 2 * dt;
 for (const road of roads) {
   const station = (road.userData.roadStation ?? road.position.z) + move;
   const loopLength = roads.length * roadSegmentLength;
-  road.userData.roadStation = station >= roadSegmentLength / 2 ? station - loopLength : station;
+  const recycleAt = 7 + roadSegmentLength / 2 + 18;
+  road.userData.roadStation = station >= recycleAt ? station - loopLength : station;
   placeOnRoad(road, 0, road.userData.roadStation);
 }
 for (const prop of scenery) {
@@ -1308,6 +1338,35 @@ function updateTraffic(dt, previousPlayer) {
     // to slow down or safely move into a neighbouring lane to pass it.
     if (!item.oncoming) {
       item.laneChangeCooldown -= dt;
+      item.playerReactionCooldown = Math.max(0, (item.playerReactionCooldown || 0) - dt);
+      const gapToPlayer = 7 - item.pathZ;
+      const closingKmh = actualSpeed - item.botSpeed;
+      const playerOverlappingLane = Math.abs(item.lateralX - playerLateral) < 2.9;
+      let playerBrakeSpeed = Infinity;
+
+      // Drivers react to a fast-approaching player: change lanes when safe,
+      // otherwise brake. A portion of drivers stay aggressive to keep traffic challenging.
+      if (gapToPlayer > 7 && gapToPlayer < 48 && closingKmh > 16 &&
+          playerOverlappingLane && item.playerReactionCooldown <= 0) {
+        const playerLaneOptions = roadMode === 'one-way' ? lanes : lanes.slice(2);
+        const safeAlternatives = playerLaneOptions.filter((candidate) =>
+          Math.abs(candidate - item.lane) > 0.1 &&
+          Math.abs(candidate - playerLateral) > 3.1 &&
+          !traffic.some((other) => other !== item && other.lane === candidate &&
+            Math.abs(other.pathZ - item.pathZ) < 25)
+        );
+        if (safeAlternatives.length && item.drivingStyle > 0.2 && gapToPlayer > 13) {
+          item.targetLane = safeAlternatives.sort((a, b) =>
+            Math.abs(b - playerLateral) - Math.abs(a - playerLateral)
+          )[0];
+          item.lane = item.targetLane;
+          item.laneChangeCooldown = 3.5 + Math.random() * 3.5;
+          playerBrakeSpeed = Math.max(45, actualSpeed - 8);
+        } else {
+          playerBrakeSpeed = Math.max(35, actualSpeed - (gapToPlayer < 18 ? 38 : 24));
+        }
+        item.playerReactionCooldown = 1.1 + Math.random() * 1.4;
+      }
       const leader = traffic
         .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
         .sort((a, b) => b.pathZ - a.pathZ)[0];
@@ -1331,7 +1390,12 @@ function updateTraffic(dt, previousPlayer) {
       const followingSpeed = leader && gap < 22
         ? Math.max(35, leader.botSpeed - (22 - gap) * 2.2)
         : desiredCruise;
-      item.botSpeed = THREE.MathUtils.damp(item.botSpeed, Math.min(desiredCruise, followingSpeed), 1.8, dt);
+      item.botSpeed = THREE.MathUtils.damp(
+        item.botSpeed,
+        Math.min(desiredCruise, followingSpeed, playerBrakeSpeed),
+        playerBrakeSpeed < desiredCruise ? 2.8 : 1.8,
+        dt
+      );
       item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 2.8, dt);
     }
 
@@ -1535,10 +1599,8 @@ for (const road of roads) {
   });
 }
 roads.length = 0;
-if (!buildModularRoadSegments()) {
-  roadSegmentLength = 50;
-  for (let i = 0; i < 8; i++) createRoad(-i * 50);
-}
+roadSegmentLength = 20;
+for (let i = 0; i < 14; i++) createRoad(-i * roadSegmentLength);
 clearTraffic();
 syncSettings();
 });
