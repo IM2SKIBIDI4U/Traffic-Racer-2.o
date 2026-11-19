@@ -1255,7 +1255,10 @@ function updateTraffic(dt, previousPlayer) {
       : dense ? baseInterval * 0.8 + Math.random() * 0.12 : baseInterval + Math.random() * 0.16;
   }
 
-  const oldPositions = new Map(traffic.map((item) => [item, item.pathZ]));
+  const oldPositions = new Map(traffic.map((item) => [item, {
+    z: item.pathZ,
+    lateral: item.lateralX
+  }]));
   const playerMps = actualSpeed / 3.6 * 2;
 
   for (const item of traffic) {
@@ -1348,7 +1351,7 @@ function updateTraffic(dt, previousPlayer) {
     laneGroups.get(item.lane).push(item);
   }
   for (const group of laneGroups.values()) {
-    group.sort((a, b) => oldPositions.get(b) - oldPositions.get(a));
+    group.sort((a, b) => oldPositions.get(b).z - oldPositions.get(a).z);
     for (let index = 1; index < group.length; index++) {
       const leader = group[index - 1];
       const follower = group[index];
@@ -1365,18 +1368,44 @@ function updateTraffic(dt, previousPlayer) {
   for (let index = traffic.length - 1; index >= 0; index--) {
     const item = traffic[index];
     const newZ = item.pathZ;
-    const prevRelZ = oldPositions.get(item) - previousPlayer.z;
+    const oldState = oldPositions.get(item);
+    const prevRelZ = oldState.z - previousPlayer.z;
     const nextRelZ = newZ - 7;
-    const relDeltaZ = nextRelZ - prevRelZ;
-    const t = relDeltaZ === 0 ? 0 : THREE.MathUtils.clamp(-prevRelZ / relDeltaZ, 0, 1);
-    const closestZ = prevRelZ + relDeltaZ * t;
-    const closestPlayerX = THREE.MathUtils.lerp(previousPlayer.x, player.position.x, t);
-    const dx = Math.abs(closestPlayerX - item.mesh.position.x);
+    const playerHalfLength = (player.userData.collisionHalfLength || 2.1) * 0.88;
+    const botHalfLength = (item.mesh.userData.collisionHalfLength || 2.1) * 0.88;
+    const playerHalfWidth = (player.userData.collisionHalfWidth || 1.05) * 0.9;
+    const botHalfWidth = (item.mesh.userData.collisionHalfWidth || 1.05) * 0.9;
+    const combinedLength = playerHalfLength + botHalfLength;
+    const combinedWidth = playerHalfWidth + botHalfWidth;
+    const dxStart = previousPlayer.x - oldState.lateral;
+    const dxEnd = player.position.x - item.lateralX;
+    const dzStart = prevRelZ;
+    const dzEnd = nextRelZ;
+    let collision = false;
+    let closestDistance = Infinity;
+    let closestDx = 0;
 
-    if (
-      Math.abs(closestZ) < (player.userData.collisionHalfLength || 2.1) + (item.mesh.userData.collisionHalfLength || 2.1) &&
-      dx < (player.userData.collisionHalfWidth || 1.05) + (item.mesh.userData.collisionHalfWidth || 1.05)
-    ) {
+    // Sweep the two car hit areas through the frame so fast vehicles cannot
+    // tunnel through each other between updates. An ellipse fits car corners
+    // more closely than the old oversized axis-aligned rectangle.
+    for (let sample = 0; sample <= 6; sample++) {
+      const t = sample / 6;
+      const dx = THREE.MathUtils.lerp(dxStart, dxEnd, t);
+      const dz = THREE.MathUtils.lerp(dzStart, dzEnd, t);
+      const normalized = (dx * dx) / (combinedWidth * combinedWidth) +
+        (dz * dz) / (combinedLength * combinedLength);
+      if (normalized < closestDistance) {
+        closestDistance = normalized;
+        closestDx = Math.abs(dx);
+      }
+      if (normalized <= 1) {
+        collision = true;
+        break;
+      }
+    }
+    const dx = closestDx;
+
+    if (collision) {
       console.log('Hit vehicle:', item.mesh.name || 'unnamed', 'at', item.mesh.position.toArray());
       // Let finishGame() perform the state transition. Setting running=false
       // here first makes its guard return early and skips the crash screen.
