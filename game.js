@@ -880,29 +880,119 @@ ground.receiveShadow = true;
 scene.add(ground);
 grounds.push(ground);
 }
-for (let z = -220; z < 40; z += 22) {
-for (const side of [-1, 1]) {
-const group = new THREE.Group();
-if (Math.random() < 0.72) {
-const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.2, 1.6, 9), material(0x604732, 1));
-trunk.position.y = 0.8;
-group.add(trunk);
-const crown = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 10), material(Math.random() < 0.5 ? 0x3c7049 : 0x557c50, 0.95));
-crown.scale.set(1.2, 1.4, 1.1);
-crown.position.y = 2.1;
-group.add(crown);
-} else {
-const height = 4 + Math.random() * 7;
-const building = new THREE.Mesh(new THREE.BoxGeometry(3, height, 4), material(0x59666c, 0.9));
-building.position.y = height / 2;
-group.add(building);
-}
-const lateral = side * (14 + Math.random() * 2);
-group.userData.roadLateral = lateral;
-placeOnRoad(group, lateral, z + Math.random() * 7);
-scene.add(group);
-scenery.push(group);
-}
+// Build a continuous urban corridor instead of sparse roadside trees.
+const cityMaterials = {
+  concrete: material(0x626b73, 0.92),
+  brick: material(0x86594a, 0.9),
+  cream: material(0xb9ad91, 0.88),
+  dark: material(0x303b45, 0.82),
+  glass: material(0x294b60, 0.24, 0.32),
+  litGlass: new THREE.MeshStandardMaterial({ color: 0xffd98a, emissive: 0xffa62b, emissiveIntensity: 0.65, roughness: 0.3 }),
+  awning: material(0xa84738, 0.78),
+  sidewalk: material(0x8d9290, 0.96),
+  curb: material(0xc8c9c4, 0.9)
+};
+const addCityBuilding = (side, z, index) => {
+  const group = new THREE.Group();
+  const width = 5.5 + Math.random() * 4.5;
+  const depth = 7 + Math.random() * 5;
+  const floors = 2 + Math.floor(Math.random() * 5);
+  const floorHeight = 2.7;
+  const height = floors * floorHeight + 1.2;
+  const facades = [cityMaterials.concrete, cityMaterials.brick, cityMaterials.cream, cityMaterials.dark];
+  const shell = new THREE.Mesh(new THREE.BoxGeometry(width, height, depth), facades[index % facades.length]);
+  shell.position.y = height / 2;
+  shell.castShadow = true;
+  shell.receiveShadow = true;
+  group.add(shell);
+
+  // Recessed-looking windows on the wall facing the street.
+  const faceX = -side * (width / 2 + 0.045);
+  const windowColumns = Math.max(2, Math.floor(depth / 1.8));
+  for (let floor = 0; floor < floors; floor++) {
+    for (let column = 0; column < windowColumns; column++) {
+      const windowMat = night && Math.random() < 0.42 ? cityMaterials.litGlass : cityMaterials.glass;
+      const windowMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.09, 1.05, 0.82),
+        windowMat
+      );
+      windowMesh.position.set(faceX, 1.25 + floor * floorHeight, -depth / 2 + 1.1 + column * ((depth - 1.5) / Math.max(1, windowColumns - 1)));
+      group.add(windowMesh);
+      const sill = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.07, 0.94), cityMaterials.dark);
+      sill.position.set(faceX - side * 0.045, windowMesh.position.y - 0.56, windowMesh.position.z);
+      group.add(sill);
+    }
+  }
+
+  // Ground-floor shopfront, sign and striped awning make blocks look different.
+  const shopGlass = new THREE.Mesh(new THREE.BoxGeometry(0.11, 1.8, depth * 0.72), cityMaterials.glass);
+  shopGlass.position.set(faceX, 1.15, 0);
+  group.add(shopGlass);
+  const sign = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.42, depth * 0.78), cityMaterials.awning);
+  sign.position.set(faceX - side * 0.07, 2.35, 0);
+  group.add(sign);
+  const awning = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.16, depth * 0.78), cityMaterials.awning);
+  awning.position.set(-side * (width / 2 + 0.55), 2.0, 0);
+  group.add(awning);
+
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(width * 0.86, 0.28, depth * 0.86), cityMaterials.dark);
+  roof.position.y = height + 0.14;
+  group.add(roof);
+  const rooftopUnit = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.8, 1.2), cityMaterials.concrete);
+  rooftopUnit.position.set(0, height + 0.65, 0);
+  group.add(rooftopUnit);
+
+  const lateral = side * (22 + Math.random() * 10);
+  group.userData.roadLateral = lateral;
+  placeOnRoad(group, lateral, z + (Math.random() - 0.5) * 5);
+  scene.add(group);
+  scenery.push(group);
+};
+
+for (let z = -220, index = 0; z < 40; z += 22, index++) {
+  for (const side of [-1, 1]) {
+    addCityBuilding(side, z, index + (side > 0 ? 1 : 0));
+    // Sidewalk slabs and curb stones add a visible street edge.
+    const sidewalk = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.18, 20), cityMaterials.sidewalk);
+    sidewalk.position.y = -0.03;
+    sidewalk.userData.roadLateral = side * 13.7;
+    placeOnRoad(sidewalk, side * 13.7, z);
+    scene.add(sidewalk);
+    scenery.push(sidewalk);
+    const curb = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 20), cityMaterials.curb);
+    curb.position.y = 0.05;
+    curb.userData.roadLateral = side * 11.75;
+    placeOnRoad(curb, side * 11.75, z);
+    scene.add(curb);
+    scenery.push(curb);
+  }
+
+  // Overhead traffic signals and pedestrian-crossing signs every few blocks.
+  if (index % 3 === 1) {
+    const side = index % 2 === 0 ? -1 : 1;
+    const signal = new THREE.Group();
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.12, 5.4, 8), cityMaterials.dark);
+    pole.position.y = 2.7;
+    signal.add(pole);
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.12, 0.12), cityMaterials.dark);
+    arm.position.set(-side * 1.45, 5.25, 0);
+    signal.add(arm);
+    const housing = new THREE.Mesh(new THREE.BoxGeometry(0.42, 1.05, 0.42), cityMaterials.dark);
+    housing.position.set(-side * 2.75, 4.65, 0);
+    signal.add(housing);
+    for (let lampIndex = 0; lampIndex < 3; lampIndex++) {
+      const lens = new THREE.Mesh(
+        new THREE.SphereGeometry(0.13, 10, 8),
+        new THREE.MeshBasicMaterial({ color: [0xff3434, 0xffc247, 0x43d77a][lampIndex], toneMapped: false })
+      );
+      lens.position.set(-side * 2.75, 4.95 - lampIndex * 0.3, 0.23);
+      signal.add(lens);
+    }
+    signal.userData.roadLateral = side * 13.2;
+    placeOnRoad(signal, side * 13.2, z);
+    scene.add(signal);
+    scenery.push(signal);
+  }
 }
 for (const side of [-1, 1]) {
 for (let z = -220; z < 30; z += 18) {
