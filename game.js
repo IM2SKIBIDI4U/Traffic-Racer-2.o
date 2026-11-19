@@ -405,11 +405,21 @@ function loadTrafficModels() {
         // Extract textures from KHR_materials_pbrSpecularGlossiness if GLTFLoader dropped them
         const parser = gltf.parser;
         const jsonMaterials = parser?.json?.materials || [];
-        const recoveredTextures = new Map();
+        // Keep recovered material data indexed by the GLTF material index.
+        // Material names are not guaranteed to exist or be unique in a GLB.
+        const recoveredTextures = [];
+        const recoveredDiffuseFactors = [];
 
         await Promise.all(
           jsonMaterials.map(async (matDef, matIndex) => {
             const specGloss = matDef.extensions?.KHR_materials_pbrSpecularGlossiness;
+            const diffuseFactor =
+              specGloss?.diffuseFactor ??
+              matDef.pbrMetallicRoughness?.baseColorFactor;
+            if (Array.isArray(diffuseFactor) && diffuseFactor.length >= 3) {
+              recoveredDiffuseFactors[matIndex] = diffuseFactor;
+            }
+
             const texIndex =
               specGloss?.diffuseTexture?.index ??
               matDef.pbrMetallicRoughness?.baseColorTexture?.index;
@@ -419,7 +429,7 @@ function loadTrafficModels() {
                 const tex = await parser.getDependency('texture', texIndex);
                 if (tex) {
                   tex.colorSpace = THREE.SRGBColorSpace;
-                  recoveredTextures.set(matDef.name || `mat_${matIndex}`, tex);
+                  recoveredTextures[matIndex] = tex;
                 }
               } catch (e) { /* skip unloadable texture */ }
             }
@@ -454,8 +464,38 @@ function loadTrafficModels() {
                 : [child.material];
               for (const originalMaterial of originalMaterials) {
                 if (!originalMaterial) continue;
-                if (originalMaterial.map) originalMaterial.map.colorSpace = THREE.SRGBColorSpace;
-                if (originalMaterial.emissiveMap) originalMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+
+                // GLTFLoader associations give the original material index,
+                // which is reliable even when material names are blank/duplicated.
+                const materialIndex = parser?.associations?.get(originalMaterial)?.materials;
+                const recoveredTexture = Number.isInteger(materialIndex)
+                  ? recoveredTextures[materialIndex]
+                  : null;
+                if (recoveredTexture && !originalMaterial.map) {
+                  originalMaterial.map = recoveredTexture;
+                }
+
+                const diffuseFactor = Number.isInteger(materialIndex)
+                  ? recoveredDiffuseFactors[materialIndex]
+                  : null;
+                if (diffuseFactor && originalMaterial.color) {
+                  originalMaterial.color.setRGB(
+                    diffuseFactor[0],
+                    diffuseFactor[1],
+                    diffuseFactor[2]
+                  );
+                }
+
+                if (originalMaterial.map) {
+                  originalMaterial.map.colorSpace = THREE.SRGBColorSpace;
+                }
+                if (originalMaterial.emissiveMap) {
+                  originalMaterial.emissiveMap.colorSpace = THREE.SRGBColorSpace;
+                }
+                if (child.geometry.attributes.color && 'vertexColors' in originalMaterial) {
+                  originalMaterial.vertexColors = true;
+                }
+                originalMaterial.needsUpdate = true;
               }
             }
           });
