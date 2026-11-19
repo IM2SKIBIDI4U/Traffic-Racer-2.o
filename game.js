@@ -1212,7 +1212,7 @@ paused = false;
 // Put a vehicle on the road immediately. The timed spawner continues adding
 // traffic afterward, but the player never starts with an empty highway.
 if (traffic.length === 0) spawnTraffic();
-if (gameMode === 'escape') { spawnPoliceChaser(-1.6); spawnPoliceChaser(1.6); }
+if (gameMode === 'escape') spawnPoliceChaser(0);
 spawnTimer = 0.75;
 showPage('');
 if (soundEnabled) {
@@ -1507,21 +1507,27 @@ function clearPoliceChase() {
   policeChasers.length=0;policeCatchTime=0;escapeProgress=0;arrests=0;
 }
 function spawnPoliceChaser(offset=0) {
-  // Police appear ahead of the player, facing back toward them.
+  // Police start behind the player and follow in the same direction.
   const car=createCar(0x172b46,false,2);
   car.name='police_pursuit_unit';
   addPoliceLightbar(car);
-  car.rotation.y=0;
   scene.add(car);
+  const index=policeChasers.length;
   const lateral=THREE.MathUtils.clamp(playerLateral+offset,-6.8,6.8);
-  const pathZ=-78-policeChasers.length*24;
+  const pathZ=42+index*19;
   placeOnRoad(car,lateral,pathZ,0);
-  policeChasers.push({mesh:car,pathZ,lateral,speed:160,offset});
+  policeChasers.push({mesh:car,pathZ,lateral,speed:10,offset,spawnScore:score});
 }
 function updatePoliceChase(dt) {
   if(!running)return;
   if(gameMode==='escape') {
-    while(policeChasers.length<2)spawnPoliceChaser(policeChasers.length===0?-1.5:1.5);
+    // Begin with one officer. Every 3,000 metres adds two more officers.
+    const targetPoliceCount=1+Math.floor(score/3000)*2;
+    while(policeChasers.length<targetPoliceCount) {
+      const index=policeChasers.length;
+      const offset=((index%3)-1)*1.8;
+      spawnPoliceChaser(offset);
+    }
     const playerMps=actualSpeed/3.6*2;
     let closest=Infinity;
     let policeNear=false;
@@ -1531,35 +1537,34 @@ function updatePoliceChase(dt) {
         unit.mesh.userData.policeLightParts[0].visible=phase===0;
         unit.mesh.userData.policeLightParts[1].visible=phase===1;
       }
-      const policeMaxSpeed=Math.min(200,160+Math.floor(score/1500)*5);
-      const desired=Math.min(policeMaxSpeed,Math.max(120,actualSpeed+12));
-      unit.speed=THREE.MathUtils.damp(unit.speed,desired,1.15,dt);
+      // Each officer starts at 10 km/h, then builds speed during the chase.
+      const policeMaxSpeed=Math.min(200,10+Math.max(0,score-unit.spawnScore)*0.08);
+      unit.speed=THREE.MathUtils.damp(unit.speed,policeMaxSpeed,0.42,dt);
       const previousGap=unit.pathZ-7;
-      // They drive toward the player in the opposite direction and actively
-      // steer toward the player's lane to attempt an interception.
-      unit.pathZ+=(playerMps+unit.speed/3.6*2)*dt;
+      // Positive pathZ is behind the player. A faster officer closes the gap.
+      unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
       const interceptLane=THREE.MathUtils.clamp(playerLateral+unit.offset,-7,7);
-      unit.lateral=THREE.MathUtils.damp(unit.lateral,interceptLane,1.8,dt);
+      unit.lateral=THREE.MathUtils.damp(unit.lateral,interceptLane,2.1,dt);
       placeOnRoad(unit.mesh,unit.lateral,unit.pathZ,0);
       const policeGap=unit.pathZ-7;
-      const crossedPlayer=previousGap<0&&policeGap>=0;
-      const closeEnough=Math.abs(policeGap)<5.8 || crossedPlayer&&Math.abs(policeGap)<9;
-      if(closeEnough && Math.abs(unit.lateral-playerLateral)<2.65 && hitCooldown<=0) {
+      const reachedPlayer=previousGap>0&&policeGap<=5.8;
+      const closeEnough=Math.abs(policeGap)<5.8;
+      if((closeEnough||reachedPlayer) && Math.abs(unit.lateral-playerLateral)<2.65 && hitCooldown<=0) {
         hitCooldown=1.25;
         runHealth=Math.max(0,runHealth-1);
         $('health-value').textContent=String(runHealth);
         $('health-bar').style.width=(runHealth/3*100)+'%';
         addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
-        unit.pathZ=-105-Math.random()*25;
-        unit.lateral=THREE.MathUtils.clamp(playerLateral+(Math.random()<0.5?-2.2:2.2),-6.8,6.8);
+        unit.pathZ=42+Math.random()*18;
+        unit.lateral=THREE.MathUtils.clamp(playerLateral+unit.offset,-6.8,6.8);
         const warning=$('damage-warning');
         warning.classList.add('show');
         window.clearTimeout(updatePoliceChase.damageTimeout);
         updatePoliceChase.damageTimeout=window.setTimeout(()=>warning.classList.remove('show'),700);
         if(runHealth<=0){$('game-over-title').textContent='BUSTED!';finishGame();return;}
-      } else if(unit.pathZ>28) {
-        // After an attempted pass, circle back and set up another interception.
-        unit.pathZ=-105-Math.random()*25;
+      } else if(unit.pathZ < -24) {
+        // If an officer gets past without making contact, reset it behind you.
+        unit.pathZ=48+Math.random()*22;
         unit.lateral=THREE.MathUtils.clamp(playerLateral+unit.offset,-6.8,6.8);
       }
       const gap=Math.abs(unit.pathZ-7);
@@ -1569,7 +1574,7 @@ function updatePoliceChase(dt) {
     if(closest>38)escapeProgress+=actualSpeed/3.6*dt;
     else escapeProgress=Math.max(0,escapeProgress-dt*12);
     const label=$('chase-status');
-    if(label)label.textContent=policeNear?'POLICE INTERCEPTING · ESCAPE!':'ESCAPE DISTANCE · '+Math.floor(escapeProgress)+' M';
+    if(label)label.textContent=policeNear?'POLICE CLOSING IN · ESCAPE!':'ESCAPE DISTANCE · '+Math.floor(escapeProgress)+' M';
     if(escapeProgress>=1000){$('game-over-title').textContent='YOU ESCAPED!';finishGame();}
   } else {
     const label=$('chase-status');if(label)label.textContent='VEHICLES STOPPED · '+arrests+'/5';
@@ -1594,11 +1599,11 @@ const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 // Restore the more responsive player steering. The slower, gentler steering
 // remains on traffic bots so their lane changes look natural.
-const steeringPower = THREE.MathUtils.clamp(0.78 + actualSpeed / 180, 0.78, 1.65);
+const steeringPower = THREE.MathUtils.clamp(0.98 + actualSpeed / 155, 0.98, 1.95);
 steerVelocity = THREE.MathUtils.damp(
   steerVelocity,
-  steer * spec.handling * steeringPower * (drifting ? 1.12 : 1),
-  drifting ? 3.6 : 5.5,
+  steer * spec.handling * steeringPower * (drifting ? 1.16 : 1),
+  drifting ? 4.2 : 6.4,
   dt
 );
 const previousLateral = playerLateral;
