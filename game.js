@@ -524,6 +524,7 @@ function loadTrafficModels() {
           if (size.x > size.z * 1.15) {
             pivot.rotation.y = Math.PI / 2;
           }
+          pivot.rotation.y += Math.PI; // <-- Add this line to turn the cars around 180°
           pivot.updateMatrixWorld(true);
 
           const finalBox = new THREE.Box3().setFromObject(pivot);
