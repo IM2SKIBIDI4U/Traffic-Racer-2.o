@@ -116,7 +116,7 @@ catch { upgradeLevels = {engine:0,handling:0,brakes:0}; }
 upgradeLevels = {engine:Math.min(5,Math.max(0,upgradeLevels.engine||0)),handling:Math.min(5,Math.max(0,upgradeLevels.handling||0)),brakes:Math.min(5,Math.max(0,upgradeLevels.brakes||0))};
 let lastAchievementScore = 0;
 let dailyDate = new Date().toISOString().slice(0,10);
-let dailyProgress = Number(load('tr-daily-progress','0')) || 0;
+let dailyProgress = load('tr-daily-progress-date','') === dailyDate ? (Number(load('tr-daily-progress','0')) || 0) : 0;
 let dailyClaimed = load('tr-daily-claimed','') === dailyDate;
 let unlockedAchievements;
 try { unlockedAchievements = new Set(JSON.parse(load('tr-achievements','[]'))); } catch { unlockedAchievements = new Set(); }
@@ -914,6 +914,7 @@ function spawnTraffic() {
     // The procedural model's headlights are on +Z; rotate it to face forward (-Z).
     car.rotation.y = Math.PI;
   }
+  if (isPolice) car.rotation.y = Math.PI;
   const baseHeading = car.rotation.y;
   placeOnRoad(car, lane, z, baseHeading + (oncoming ? Math.PI : 0));
   if (night) {
@@ -954,6 +955,10 @@ function refreshWallet() {
 for (const id of ['wallet', 'menu-wallet', 'garage-wallet']) {
 $(id).textContent = credits.toLocaleString();
 }
+const count=$('achievement-count');
+if(count) count.textContent=String(unlockedAchievements.size);
+const daily=$('daily-challenge-progress');
+if(daily) daily.textContent=dailyClaimed?'DAILY CHALLENGE · COMPLETED (+100 CREDITS)':'DAILY CHALLENGE · DRIVE 2,000 M IN ONE RUN · '+Math.min(2000,dailyProgress).toLocaleString()+'/2,000 M';
 }
 function renderGarage() {
 const list = $('car-list');
@@ -1114,6 +1119,7 @@ nearMissChain = Math.min(nearMissChain + 1, 4);
 const reward = 5 + (nearMissChain - 1) * 2;
 awardCredits(reward);
 const toast = $('near-miss');
+unlockAchievement('close-call','CLOSE CALL');
 toast.innerHTML = 'NEAR MISS! +' + reward + '';
 toast.classList.add('show');
 window.clearTimeout(showNearMiss.timeout);
@@ -1257,11 +1263,12 @@ function setLocation(index) {
   if($('location-toggle')) $('location-toggle').textContent=theme.name;
 }
 function effectiveCarStats(spec) {
+  const traction = weatherMode === 'snow' ? 0.7 : weatherMode === 'rain' ? 0.86 : weatherMode === 'fog' ? 0.96 : 1;
   return {
-    maxSpeed: spec.maxSpeed + upgradeLevels.engine*8,
-    acceleration: spec.acceleration + upgradeLevels.engine*1.8,
-    handling: spec.handling + upgradeLevels.handling*0.65,
-    braking: 45 + upgradeLevels.brakes*8
+    maxSpeed: (spec.maxSpeed + upgradeLevels.engine*8) * (weatherMode === 'snow' ? 0.82 : weatherMode === 'rain' ? 0.92 : 1),
+    acceleration: (spec.acceleration + upgradeLevels.engine*1.8) * traction,
+    handling: (spec.handling + upgradeLevels.handling*0.65) * traction,
+    braking: (45 + upgradeLevels.brakes*8) * (weatherMode === 'snow' ? 0.7 : weatherMode === 'rain' ? 0.84 : 1)
   };
 }
 function saveAchievements() { save('tr-achievements',JSON.stringify([...unlockedAchievements])); }
@@ -1277,7 +1284,9 @@ function updateProgression() {
   if(meters>=1000)unlockAchievement('one-km','1 KM DRIVER');
   if(meters>=5000)unlockAchievement('five-km','HIGHWAY REGULAR');
   if(meters>=10000)unlockAchievement('ten-km','ROAD LEGEND');
-  if(meters>=dailyProgress) { dailyProgress=meters; save('tr-daily-progress',String(dailyProgress)); }
+  if(meters>=dailyProgress) { dailyProgress=meters; save('tr-daily-progress',String(dailyProgress)); save('tr-daily-progress-date',dailyDate); }
+  const dailyLabel=$('daily-challenge-progress');
+  if(dailyLabel) dailyLabel.textContent=dailyClaimed?'COMPLETED · +100 CREDITS':'DRIVE 2,000 M IN ONE RUN · '+Math.min(2000,meters).toLocaleString()+'/2,000 M';
   if(!dailyClaimed && meters>=2000) {
     dailyClaimed=true; save('tr-daily-claimed',dailyDate); awardCredits(100);
     const toast=$('achievement-toast'); toast.textContent='DAILY CHALLENGE COMPLETE: +100 CREDITS';
