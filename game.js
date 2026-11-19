@@ -853,7 +853,8 @@ if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
 }
 function spawnTraffic() {
-  if (traffic.length >= 16) return false;
+  const trafficLimit = Math.min(24, 16 + Math.min(8, Math.floor(score / 500)));
+  if (traffic.length >= trafficLimit) return false;
   // Place traffic well beyond the visible driving area so it is already on the road before the player reaches it.
   const z = -225 - Math.random() * 30;
   const laneOptions = roadMode === 'one-way'
