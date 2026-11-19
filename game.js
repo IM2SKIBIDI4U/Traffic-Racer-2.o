@@ -140,6 +140,7 @@ function roadHeading(z) {
   return Math.atan(slope);
 }
 function placeOnRoad(object, lateral, z, headingOffset = 0) {
+  object.userData.roadZ = z;
   const heading = roadHeading(z);
   object.position.x = roadCenterX(z) + lateral * Math.cos(heading);
   object.position.z = z - lateral * Math.sin(heading);
@@ -909,7 +910,7 @@ function spawnTraffic() {
     ? [...lanes]
     : (Math.random() < 0.38 ? lanes.slice(0, 2) : lanes.slice(2));
   const availableLanes = laneOptions.filter((candidate) =>
-    !traffic.some((item) => item.lane === candidate && Math.abs(item.mesh.position.z - z) < 24)
+    !traffic.some((item) => item.lane === candidate && Math.abs(item.pathZ - z) < 24)
   );
   if (!availableLanes.length) return false;
   const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
@@ -1263,7 +1264,7 @@ function updateTraffic(dt, previousPlayer) {
   }
   // Keep a buffer of traffic far ahead. This replenishes the road before fast
   // driving brings the player close enough to notice newly spawned vehicles.
-  const trafficAhead = traffic.filter((item) => item.mesh.position.z < -35).length;
+  const trafficAhead = traffic.filter((item) => item.pathZ < -35).length;
   spawnTimer -= dt;
   if (spawnTimer <= 0 && trafficAhead < 10) {
     const dense = burstTimer > 0;
@@ -1344,7 +1345,7 @@ function updateTraffic(dt, previousPlayer) {
     const item = traffic[index];
     const newZ = item.pathZ;
     const prevRelZ = oldPositions.get(item) - previousPlayer.z;
-    const nextRelZ = newZ - player.position.z;
+    const nextRelZ = newZ - 7;
     const relDeltaZ = nextRelZ - prevRelZ;
     const t = relDeltaZ === 0 ? 0 : THREE.MathUtils.clamp(-prevRelZ / relDeltaZ, 0, 1);
     const closestZ = prevRelZ + relDeltaZ * t;
