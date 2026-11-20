@@ -1681,8 +1681,8 @@ function resolveVehicleImpulse(a, b, normalX, normalZ, massA, massB, restitution
   const aAngular = impulse * crossA / iA, bAngular = -impulse * crossB / iB;
   a.vx = (a.vx || 0) + aX; a.vz = (a.vz || 0) + aZ;
   b.vx = (b.vx || 0) + bX; b.vz = (b.vz || 0) + bZ;
-  a.omega = THREE.MathUtils.clamp(omegaA + aAngular, -2.8, 2.8);
-  b.omega = THREE.MathUtils.clamp(omegaB + bAngular, -2.8, 2.8);
+  a.omega = THREE.MathUtils.clamp(omegaA + aAngular, -1.35, 1.35);
+  b.omega = THREE.MathUtils.clamp(omegaB + bAngular, -1.35, 1.35);
   return { impulse, aX, aZ, bX, bZ, aAngular, bAngular };
 }
 
