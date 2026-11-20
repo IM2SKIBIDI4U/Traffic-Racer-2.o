@@ -949,7 +949,9 @@ const addCityBuilding = (side, z, index) => {
   rooftopUnit.position.set(0, height + 0.65, 0);
   group.add(rooftopUnit);
 
-  const lateral = side * (22 + Math.random() * 10);
+  const lateral = side * (arguments.length > 3 && arguments[3] === 1
+    ? 44 + Math.random() * 22
+    : 22 + Math.random() * 10);
   group.userData.roadLateral = lateral;
   placeOnRoad(group, lateral, z + (Math.random() - 0.5) * 5);
   scene.add(group);
@@ -1001,6 +1003,80 @@ for (let z = -220, index = 0; z < 40; z += 22, index++) {
     scenery.push(signal);
   }
 }
+// Extend the environment beyond the highway into several city blocks.
+for (let z = -220, blockIndex = 0; z < 40; z += 22, blockIndex++) {
+  for (const side of [-1, 1]) {
+    // A second, staggered row of buildings creates a deeper city skyline.
+    addCityBuilding(side, z + 10, blockIndex + 3, 1);
+  }
+}
+
+// Parallel neighborhood streets run through the city on both sides.
+const sideStreetMat = material(0x303943, 0.94);
+const streetLineMat = material(0xd9d9d1, 0.82);
+for (const side of [-1, 1]) {
+  const street = new THREE.Group();
+  const asphaltStrip = new THREE.Mesh(new THREE.BoxGeometry(9.5, 0.18, 270), sideStreetMat);
+  asphaltStrip.position.y = -0.015;
+  street.add(asphaltStrip);
+  for (let dz = -132; dz <= 132; dz += 12) {
+    const dash = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.035, 5.5), streetLineMat);
+    dash.position.set(0, 0.105, dz);
+    street.add(dash);
+  }
+  street.userData.roadLateral = side * 39;
+  placeOnRoad(street, side * 39, -85);
+  scene.add(street);
+  scenery.push(street);
+}
+
+// Cross streets connect the main avenue to the neighborhood roads.
+for (let z = -209, crossIndex = 0; z < 30; z += 66, crossIndex++) {
+  const crossStreet = new THREE.Group();
+  const asphaltCrossing = new THREE.Mesh(new THREE.BoxGeometry(150, 0.18, 9), sideStreetMat);
+  asphaltCrossing.position.y = -0.015;
+  crossStreet.add(asphaltCrossing);
+  const centerLine = new THREE.Mesh(new THREE.BoxGeometry(150, 0.035, 0.12), streetLineMat);
+  centerLine.position.y = 0.105;
+  crossStreet.add(centerLine);
+  // Painted pedestrian crossings at both ends of each intersection.
+  for (const x of [-7, -5.5, -4, 4, 5.5, 7]) {
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.04, 3.2), streetLineMat);
+    stripe.position.set(x, 0.11, 0);
+    crossStreet.add(stripe);
+  }
+  crossStreet.userData.roadLateral = 0;
+  placeOnRoad(crossStreet, 0, z);
+  scene.add(crossStreet);
+  scenery.push(crossStreet);
+}
+
+// Small green spaces and tree groups break up the building rows.
+const parkGroundMat = material(0x536f50, 1);
+const treeTrunkMat = material(0x594333, 1);
+const treeLeafMats = [material(0x315b3c, 1), material(0x477447, 1), material(0x597d4d, 1)];
+for (let z = -198, parkIndex = 0; z < 30; z += 88, parkIndex++) {
+  for (const side of [-1, 1]) {
+    const park = new THREE.Group();
+    const lawn = new THREE.Mesh(new THREE.BoxGeometry(13, 0.12, 18), parkGroundMat);
+    lawn.position.y = -0.08;
+    park.add(lawn);
+    for (let treeIndex = 0; treeIndex < 3; treeIndex++) {
+      const x = (treeIndex - 1) * 4.2;
+      const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.24, 2.1, 7), treeTrunkMat);
+      trunk.position.set(x, 1.0, (treeIndex % 2) * 3 - 1.5);
+      const crown = new THREE.Mesh(new THREE.SphereGeometry(1.25 + Math.random() * 0.35, 8, 7), treeLeafMats[(treeIndex + parkIndex) % treeLeafMats.length]);
+      crown.position.set(x, 2.65, (treeIndex % 2) * 3 - 1.5);
+      park.add(trunk, crown);
+    }
+    const parkLateral = side * (57 + (parkIndex % 2) * 5);
+    park.userData.roadLateral = parkLateral;
+    placeOnRoad(park, parkLateral, z);
+    scene.add(park);
+    scenery.push(park);
+  }
+}
+
 for (const side of [-1, 1]) {
 for (let z = -220; z < 30; z += 18) {
 const rail = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.45, 18), material(0x778389, 0.6, 0.4));
