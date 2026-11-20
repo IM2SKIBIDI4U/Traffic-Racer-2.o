@@ -2637,7 +2637,7 @@ function spawnCityTraffic() {
   const sign=Math.random()<0.5?-1:1;
   const road=Math.round((Math.random()*6-3))*CITY_BLOCK;
   const lane=(Math.random()<0.5?-1:1)*3.8;
-  mesh.position.set(axis==='x'?road+lane:road,0,axis==='z'?road+lane:road);
+  mesh.position.set(axis==='x'?player.position.x+(Math.random()-0.5)*180:road+lane,0,axis==='z'?player.position.z+(Math.random()-0.5)*180:road);
   mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
   scene.add(mesh);
   cityTraffic.push({mesh,axis,sign,speed:13+Math.random()*9,turnAt:0,turnCooldown:4});
@@ -2647,10 +2647,14 @@ function spawnCityPolice() {
   const mesh=createCar(0x172b46,false,2);
   addPoliceLightbar(mesh);
   const angle=cityHeading+Math.PI+(Math.random()-0.5)*1.2;
-  mesh.position.copy(player.position).add(new THREE.Vector3(Math.sin(angle)*48,0,Math.cos(angle)*48));
-  mesh.rotation.y=angle;
+  mesh.position.copy(player.position).add(new THREE.Vector3(Math.sin(angle)*54,0,Math.cos(angle)*54));
+  const axis=Math.random()<0.5?'x':'z';
+  const lane=(Math.random()<0.5?-1:1)*3.8;
+  if(axis==='x')mesh.position.z=Math.round(mesh.position.z/CITY_BLOCK)*CITY_BLOCK+lane;
+  else mesh.position.x=Math.round(mesh.position.x/CITY_BLOCK)*CITY_BLOCK+lane;
+  mesh.rotation.y=axis==='x'?(Math.cos(angle)>=0?Math.PI/2:-Math.PI/2):(Math.sin(angle)>=0?0:Math.PI);
   scene.add(mesh);
-  cityPolice.push({mesh,speed:0,health:200,disabled:false,ramCooldown:0,impact:new THREE.Vector3()});
+  cityPolice.push({mesh,axis,speed:0,health:200,disabled:false,ramCooldown:0,impact:new THREE.Vector3()});
 }
 function cityVehicleCollision(mesh, other, speed) {
   const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
@@ -2666,15 +2670,21 @@ function cityVehicleCollision(mesh, other, speed) {
   return true;
 }
 function updateOpenCity(dt,stats) {
+  if(!takedownHud) {
+    takedownHud=document.createElement('div');
+    takedownHud.id='takedown-charge-hud';
+    Object.assign(takedownHud.style,{position:'fixed',left:'50%',bottom:'92px',transform:'translateX(-50%)',zIndex:'30',width:'min(260px,70vw)',padding:'9px 12px',borderRadius:'8px',background:'rgba(5,13,22,.82)',color:'#fff',font:'700 12px Arial,sans-serif',letterSpacing:'1px',textAlign:'center',pointerEvents:'none',boxSizing:'border-box'});
+    document.body.appendChild(takedownHud);
+  }
   nitroActive=keys.nitro&&nitro>0&&!keys.brake;
   nitro=THREE.MathUtils.clamp(nitro+(nitroActive?-34:8)*dt,0,100);
   const maxSpeed=(stats.maxSpeed+(nitroActive?45:0))/3.6;
   const forward=keys.accelerate||autoAccel;
-  if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
-  else if(keys.brake) {
+  if(keys.brake) {
     if(citySpeedMps>1.2)citySpeedMps=Math.max(0,citySpeedMps-(stats.braking/3.6+citySpeedMps*0.8)*dt);
     else citySpeedMps=Math.max(-8,citySpeedMps-stats.acceleration/3.6*0.55*dt);
-  } else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
+  } else if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
+  else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
   const steer=(keys.right?1:0)-(keys.left?1:0);
   const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
   cityHeading+=steer*1.35*speedFactor*Math.sign(citySpeedMps||1)*dt;
@@ -2704,9 +2714,18 @@ function updateOpenCity(dt,stats) {
     const dir=bot.axis==='x'?new THREE.Vector3(bot.sign,0,0):new THREE.Vector3(0,0,bot.sign);
     bot.mesh.position.addScaledVector(dir,bot.speed*dt);
     const along=bot.axis==='x'?bot.mesh.position.x:bot.mesh.position.z;
-    if(Math.abs(along/CITY_BLOCK-Math.round(along/CITY_BLOCK))<0.035&&bot.turnCooldown<=0&&Math.random()<0.08) {
-      if(bot.axis==='x')bot.axis='z';else bot.axis='x';
-      bot.sign=Math.random()<0.5?-1:1;
+    const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
+    if(Math.abs(along-junction)<3.2&&bot.turnCooldown<=0&&Math.random()<0.08) {
+      const lane=(Math.random()<0.5?-1:1)*3.8;
+      if(bot.axis==='x') {
+        bot.axis='z';
+        bot.mesh.position.x=junction+lane;
+        bot.sign=Math.random()<0.5?-1:1;
+      } else {
+        bot.axis='x';
+        bot.mesh.position.z=junction+lane;
+        bot.sign=Math.random()<0.5?-1:1;
+      }
       bot.turnCooldown=3.5;
     }
     bot.mesh.rotation.y=bot.axis==='x'?(bot.sign>0?Math.PI/2:-Math.PI/2):(bot.sign>0?0:Math.PI);
@@ -2724,9 +2743,20 @@ function updateOpenCity(dt,stats) {
     cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
     const toPlayer=new THREE.Vector3(player.position.x-cop.mesh.position.x,0,player.position.z-cop.mesh.position.z);
     const distance=toPlayer.length();
-    const desired=Math.atan2(toPlayer.x,toPlayer.z);
+    // Follow the street grid: police can only change axis at intersections.
+    const along=cop.axis==='x'?cop.mesh.position.x:cop.mesh.position.z;
+    const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
+    if(Math.abs(along-junction)<4.5) {
+      const lane=(Math.random()<0.5?-1:1)*3.8;
+      if(cop.axis==='x'&&Math.abs(toPlayer.z)>Math.abs(toPlayer.x)*0.55) {
+        cop.axis='z';cop.mesh.position.x=junction+lane;
+      } else if(cop.axis==='z'&&Math.abs(toPlayer.x)>Math.abs(toPlayer.z)*0.55) {
+        cop.axis='x';cop.mesh.position.z=junction+lane;
+      }
+    }
+    const desired=cop.axis==='x'?(toPlayer.x>=0?Math.PI/2:-Math.PI/2):(toPlayer.z>=0?0:Math.PI);
     let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
-    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.55*dt,1.55*dt);
+    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
     cop.speed=THREE.MathUtils.damp(cop.speed,Math.min(30,Math.max(17,Math.abs(citySpeedMps)+7)),1.4,dt);
     const copDir=new THREE.Vector3(Math.sin(cop.mesh.rotation.y),0,Math.cos(cop.mesh.rotation.y));
     cop.mesh.position.addScaledVector(copDir,cop.speed*dt);
