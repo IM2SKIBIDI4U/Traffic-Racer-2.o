@@ -1158,7 +1158,6 @@ function spawnTraffic() {
     targetLane: lane,
     laneChangeCooldown: 2 + Math.random() * 5,
     drivingStyle: Math.random(),
-    playerReactionCooldown: 0.4 + Math.random() * 1.2,
     checkedMiss: false,
     isTarget,
     previousZ: z,
@@ -2136,7 +2135,6 @@ function updateTraffic(dt, previousPlayer) {
     // signal before changing lanes, and smoothly return to a stable lane.
     if (!item.oncoming) {
       item.laneChangeCooldown = Math.max(0, item.laneChangeCooldown - dt);
-      item.playerReactionCooldown = Math.max(0, (item.playerReactionCooldown || 0) - dt);
 
       const laneOptions = roadMode === 'one-way' ? lanes : lanes.slice(2);
       const findLeader = (lane, range = 75) => traffic
@@ -2172,33 +2170,12 @@ function updateTraffic(dt, previousPlayer) {
         }
       }
 
-      // React to a player approaching quickly from behind, but do not make
-      // traffic instantly teleport or swerve into an occupied lane.
-      const gapToPlayer = 7 - item.pathZ;
-      const closingKmh = actualSpeed - item.botSpeed;
-      let playerTargetSpeed = 90;
-      if (gapToPlayer > 5 && gapToPlayer < 42 && closingKmh > 18 &&
-          Math.abs(item.lateralX - playerLateral) < 3.0) {
-        playerTargetSpeed = Math.max(48, actualSpeed - (gapToPlayer < 17 ? 34 : 18));
-        if (item.playerReactionCooldown <= 0 && item.laneChangeCooldown <= 0) {
-          const escapeLane = laneOptions
-            .filter((candidate) => Math.abs(candidate - item.targetLane) > 0.1 &&
-              Math.abs(candidate - playerLateral) > 3.1)
-            .find((candidate) => !traffic.some((other) => other !== item && !other.oncoming &&
-              Math.abs(other.lane - candidate) < 0.2 && Math.abs(other.pathZ - item.pathZ) < 32));
-          if (escapeLane !== undefined && item.drivingStyle > 0.3 && gapToPlayer > 13) {
-            item.targetLane = escapeLane;
-            item.laneChangeCooldown = 5;
-          }
-          item.playerReactionCooldown = 1.6 + Math.random() * 1.2;
-        }
-      }
 
       const cruise = THREE.MathUtils.clamp(68 + (item.paceOffset || 0) * 0.45, 52, 90);
       const followTarget = leader && gap < desiredGap
         ? Math.max(42, leader.botSpeed - (desiredGap - gap) * 1.25)
         : cruise;
-      const targetSpeed = Math.min(cruise, followTarget, playerTargetSpeed);
+      const targetSpeed = Math.min(cruise, followTarget);
       item.botSpeed = THREE.MathUtils.clamp(
         THREE.MathUtils.damp(item.botSpeed, targetSpeed, targetSpeed < item.botSpeed ? 2.4 : 1.15, dt),
         0, 90
