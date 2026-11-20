@@ -1090,10 +1090,8 @@ function spawnTraffic() {
     car.userData.collisionHalfLength = source.userData.collisionHalfLength;
   } else {
     car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
-    // The procedural model's headlights are on +Z; rotate it to face forward (-Z).
-    car.rotation.y = Math.PI;
+    // Traffic heading is applied once below through trafficDirectionOffset.
   }
-  if (isPolice) car.rotation.y = Math.PI;
   if (isTarget) {
     car.name = 'police_mode_target';
     const beacon = new THREE.Group();
