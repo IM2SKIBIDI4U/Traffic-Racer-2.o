@@ -1021,6 +1021,19 @@ function loadRoadsideModels() {
   finishLoadingScreen();
 }
 
+function getTrafficPaceKmh() {
+  // Civilian traffic should move with the current chase instead of using
+  // unrelated random speeds. Nearby police pace influences the flow slightly.
+  const policeAverage = policeChasers.length
+    ? policeChasers.reduce((sum, unit) => sum + (unit.speed || 0), 0) / policeChasers.length
+    : actualSpeed;
+  return THREE.MathUtils.clamp(
+    Math.max(actualSpeed * 0.9, policeAverage * 0.82, 58),
+    55,
+    195
+  );
+}
+
 function chooseTrafficLane() {
 if (roadMode === 'one-way') return lanes[Math.floor(Math.random() * lanes.length)];
 return Math.random() < 0.38 ? lanes[Math.floor(Math.random() * 2)] : lanes[2 + Math.floor(Math.random() * 2)];
@@ -1049,7 +1062,8 @@ function spawnTraffic() {
   const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
   const oncoming = roadMode === 'two-way' && lane < 0;
   const difficulty = Math.min(8, Math.floor(score / 500));
-  const botSpeed = 60 + Math.random() * 100 + difficulty * 4.5;
+  const paceOffset = (Math.random() - 0.5) * 24;
+  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset, 45, 205);
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
   // In Police mode, keep exactly one marked suspect active at a time.
@@ -1117,6 +1131,7 @@ function spawnTraffic() {
   }
   traffic.push({
     mesh: car, lane, oncoming, botSpeed,
+    paceOffset,
     lateralX: lane,
     pathZ: z,
     baseHeading,
@@ -2006,9 +2021,12 @@ function updateTraffic(dt, previousPlayer) {
         .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
         .sort((a, b) => b.pathZ - a.pathZ)[0];
       const gap = leader ? item.pathZ - leader.pathZ : Infinity;
-      const difficulty = Math.min(8, Math.floor(score / 500));
-      const personalityFactor = item.drivingStyle < 0.25 ? 0.78 : item.drivingStyle > 0.75 ? 1.18 : 1;
-      const desiredCruise = Math.min(245, item.targetSpeed * personalityFactor + difficulty * 4.5);
+      // Continuously adapt each car to the live player/police pace. A small
+      // per-car offset keeps traffic varied without making it crawl or fly past.
+      const paceTarget = THREE.MathUtils.clamp(getTrafficPaceKmh() + (item.paceOffset || 0), 45, 205);
+      item.targetSpeed = THREE.MathUtils.damp(item.targetSpeed, paceTarget, 0.7, dt);
+      const personalityFactor = item.drivingStyle < 0.25 ? 0.96 : item.drivingStyle > 0.75 ? 1.05 : 1;
+      const desiredCruise = THREE.MathUtils.clamp(item.targetSpeed * personalityFactor, 45, 210);
 
       if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
         const laneOptions = roadMode === 'one-way'
@@ -2148,8 +2166,14 @@ function updateTraffic(dt, previousPlayer) {
       // of deleting the traffic car, so the vehicles visibly bump.
       const side = Math.sign(dxStart + dxEnd) || (Math.random() < 0.5 ? -1 : 1);
       const longitudinalSide = Math.sign(newZ - 7) || 1;
-      const normalX = side;
-      const normalZ = longitudinalSide;
+      // Use the axis with the deeper overlap as the contact normal. This
+      // avoids diagonal impulses when the cars are really hitting side-on
+      // or nose-to-tail.
+      const overlapX = combinedWidth - Math.abs(dxStart + dxEnd) * 0.5;
+      const overlapZ = combinedLength - Math.abs((prevRelZ + nextRelZ) * 0.5);
+      const sideContact = overlapX < overlapZ;
+      const normalX = sideContact ? side : 0;
+      const normalZ = sideContact ? 0 : longitudinalSide;
       // Solve the contact using both cars' masses and relative velocity.
       const playerBody = { vx: steerVelocity + collisionRecoil, vz: actualSpeed / 3.6 };
       const trafficBody = {
@@ -2163,8 +2187,6 @@ function updateTraffic(dt, previousPlayer) {
       );
       // Separate the bodies by the smallest overlap axis, then let their
       // post-impact velocities carry them apart over subsequent frames.
-      const overlapX = combinedWidth - Math.abs(dxStart + dxEnd) * 0.5;
-      const overlapZ = combinedLength - Math.abs((prevRelZ + nextRelZ) * 0.5);
       if (overlapX < overlapZ) {
         item.lateralX = THREE.MathUtils.clamp(playerLateral - normalX * (combinedWidth + 0.14), -8.2, 8.2);
       } else {
