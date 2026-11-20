@@ -1927,15 +1927,32 @@ function updatePlayer(dt) {
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
-// Restore the more responsive player steering. The slower, gentler steering
-// remains on traffic bots so their lane changes look natural.
-const steeringPower = THREE.MathUtils.clamp(1.15 + actualSpeed / 135, 1.15, 2.25);
-steerVelocity = THREE.MathUtils.damp(
-  steerVelocity,
-  steer * spec.handling * steeringPower * (drifting ? 1.16 : 1),
-  drifting ? 4.2 : 6.4,
+const speedMps = actualSpeed / 3.6;
+const speedRatio = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed), 0, 1.25);
+// A speed-sensitive steering rack: more steering angle is available at low
+// speed, while high-speed steering is deliberately more restrained.
+const maxSteerAngle = THREE.MathUtils.clamp(0.34 - speedRatio * 0.19, 0.12, 0.34);
+const steeringAngleTarget = steer * maxSteerAngle * (spec.handling || 1);
+player.userData.steeringAngle = THREE.MathUtils.damp(
+  player.userData.steeringAngle || 0,
+  steeringAngleTarget,
+  steer === 0 ? 4.2 : 5.8,
   dt
 );
+// Lateral movement comes from forward speed and steering angle, not an
+// instantaneous lane-position change. Grip limits lateral acceleration.
+const desiredLateralVelocity = THREE.MathUtils.clamp(
+  speedMps * Math.tan(player.userData.steeringAngle || 0),
+  -5.2,
+  5.2
+);
+const gripResponse = drifting ? 2.0 : 4.6;
+const lateralVelocityChange = THREE.MathUtils.clamp(
+  (desiredLateralVelocity - steerVelocity) * gripResponse * dt,
+  -7.0 * dt,
+  7.0 * dt
+);
+steerVelocity += lateralVelocityChange;
 const previousLateral = playerLateral;
 playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
 collisionHeading = THREE.MathUtils.clamp(collisionHeading + collisionAngularVelocity * dt, -0.48, 0.48);
@@ -1953,13 +1970,17 @@ const longitudinalAcceleration = THREE.MathUtils.clamp(
   (currentSpeedMps - previousSpeedMps) / Math.max(dt, 0.001), -9, 6
 );
 player.userData.previousSpeedMps = currentSpeedMps;
-// Turn the car body into the direction of steering, then self-centre
-// when the steering input is released. Lateral movement remains responsive.
-const steeringYawTarget = steer * THREE.MathUtils.clamp(0.12 + actualSpeed / 1500, 0.12, 0.25);
+// Vehicle heading follows its actual lateral motion. This avoids the
+// sideways-crab look and lets counter-steering naturally correct a slide.
+const steeringYawTarget = THREE.MathUtils.clamp(
+  Math.atan2(steerVelocity, Math.max(4, speedMps)),
+  -0.30,
+  0.30
+);
 const steeringYaw = THREE.MathUtils.damp(
   player.userData.steeringYaw || 0,
   steeringYawTarget,
-  steer === 0 ? 5.8 : 7.5,
+  drifting ? 3.2 : 6.0,
   dt
 );
 player.userData.steeringYaw = steeringYaw;
@@ -1973,9 +1994,11 @@ player.userData.body.rotation.x = THREE.MathUtils.damp(
   player.userData.body.rotation.x || 0,
   THREE.MathUtils.clamp(-longitudinalAcceleration * 0.004, -0.035, 0.045), 4.5, dt
 );
+const lateralAcceleration = (steerVelocity - (player.userData.previousLateralVelocity || 0)) / Math.max(dt, 0.001);
+player.userData.previousLateralVelocity = steerVelocity;
 player.userData.body.rotation.z = THREE.MathUtils.damp(
   player.userData.body.rotation.z || 0,
-  THREE.MathUtils.clamp(-lateralMotion * 0.006, -0.045, 0.045), 4, dt
+  THREE.MathUtils.clamp(-lateralAcceleration * 0.0045, -0.065, 0.065), 3.2, dt
 );
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
@@ -2334,7 +2357,14 @@ const position = player.localToWorld(new THREE.Vector3(0, 1.35, 0.15));
 const target = player.localToWorld(new THREE.Vector3(0, 1.3, -35 - fast * 8));
 if (dt === 0) camera.position.copy(position);
 else camera.position.lerp(position, 1 - Math.exp(-8 * dt));
-if (cameraShake) camera.position.x += (Math.random() - 0.5) * cameraShake;
+// Shake is a small, smooth, decaying offset from the camera's base position.
+// Never use fresh random offsets each frame: that creates permanent jitter.
+cameraShake = THREE.MathUtils.damp(cameraShake, 0, 7.5, dt);
+if (cameraShake > 0.001 && dt > 0) {
+  const t = performance.now() * 0.001;
+  camera.position.x += Math.sin(t * 28) * cameraShake * 0.16;
+  camera.position.y += Math.sin(t * 37) * cameraShake * 0.055;
+}
 camera.lookAt(target);
 applyCameraMode(camera, player, dt);
 }
