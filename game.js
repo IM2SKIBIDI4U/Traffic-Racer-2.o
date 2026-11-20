@@ -124,7 +124,7 @@ let citySpeedMps = 0;
 let cityHeading = 0;
 let cityWorldReady = false;
 const CITY_BLOCK = 90;
-const CITY_HALF = 360;
+const CITY_HALF = 630;
 
 let repairSpawnTimer = 5;
 let policeCatchTime = 0;
@@ -465,7 +465,7 @@ const rearCenter = rearBox.getCenter(new THREE.Vector3());
 const frontDirection = frontCenter.sub(rearCenter);
 if (frontDirection.lengthSq() > 0.001) {
 const currentAngle = Math.atan2(frontDirection.x, frontDirection.z);
-model.rotation.y += Math.PI - currentAngle;
+model.rotation.y -= currentAngle;
 }
 }
 model.updateWorldMatrix(true, true);
@@ -2569,7 +2569,7 @@ function createOpenCityWorld() {
   cityRoot = new THREE.Group();
   cityRoot.name = 'open_city_world';
   scene.add(cityRoot);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800), material(0x53664e, 1));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1700, 1700), material(0x53664e, 1));
   ground.rotation.x = -Math.PI / 2;
   ground.position.y = -0.18;
   ground.receiveShadow = true;
@@ -2581,16 +2581,16 @@ function createOpenCityWorld() {
   const glassCity = material(0x29495b,0.22,0.3);
   // Seven-by-seven connected streets. Every horizontal/vertical crossing is
   // a real open intersection, not a painted road prop.
-  for (let i=-4; i<=4; i++) {
-    const roadV = new THREE.Mesh(new THREE.BoxGeometry(22,0.16,900),asphaltCity);
+  for (let i=-7; i<=7; i++) {
+    const roadV = new THREE.Mesh(new THREE.BoxGeometry(22,0.16,1600),asphaltCity);
     roadV.position.set(i*CITY_BLOCK,-0.045,0);
     roadV.receiveShadow=true;
     cityRoot.add(roadV);
-    const roadH = new THREE.Mesh(new THREE.BoxGeometry(900,0.16,22),asphaltCity);
+    const roadH = new THREE.Mesh(new THREE.BoxGeometry(1600,0.16,22),asphaltCity);
     roadH.position.set(0,-0.045,i*CITY_BLOCK);
     roadH.receiveShadow=true;
     cityRoot.add(roadH);
-    for(let p=-4;p<=4;p++) {
+    for(let p=-7;p<=7;p++) {
       for(const side of [-1,1]) {
         const stripeV=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.035,3.2),laneCity);
         stripeV.position.set(i*CITY_BLOCK+side*5.4,0.055,p*CITY_BLOCK+10);
@@ -2603,11 +2603,11 @@ function createOpenCityWorld() {
   }
   // Buildings occupy the middle of each block, leaving the intersections and
   // street corridors completely clear for driving and pursuit.
-  for(let gx=-4;gx<4;gx++) for(let gz=-4;gz<4;gz++) {
+  for(let gx=-7;gx<7;gx++) for(let gz=-7;gz<7;gz++) {
     const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
-    const count=2+Math.floor(Math.random()*3);
+    const count=4+Math.floor(Math.random()*4);
     for(let n=0;n<count;n++) {
-      const w=10+Math.random()*15, d=10+Math.random()*15;
+      const w=8+Math.random()*10, d=8+Math.random()*10;
       const h=12+Math.random()*48;
       const b=new THREE.Group();
       const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facadeMats[Math.floor(Math.random()*facadeMats.length)]);
@@ -2615,7 +2615,7 @@ function createOpenCityWorld() {
       shell.castShadow=true; shell.receiveShadow=true; b.add(shell);
       const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.82, h*0.62, 0.08),glassCity);
       windows.position.set(0,h*0.56,d/2+0.05); b.add(windows);
-      b.position.set(cx+(Math.random()-0.5)*43,0,cz+(Math.random()-0.5)*43);
+      b.position.set(cx+(Math.random()-0.5)*34,0,cz+(Math.random()-0.5)*34);
       cityRoot.add(b);
     }
     const park = new THREE.Mesh(new THREE.BoxGeometry(18,0.12,18),material(0x55734d,1));
@@ -2625,11 +2625,11 @@ function createOpenCityWorld() {
   // Mark the outer edge with simple barriers so the city feels bounded.
   const wallMat=material(0x46525a,0.9);
   for(const x of [-CITY_HALF-12,CITY_HALF+12]) {
-    const wall=new THREE.Mesh(new THREE.BoxGeometry(3,3,900),wallMat);
+    const wall=new THREE.Mesh(new THREE.BoxGeometry(3,3,1600),wallMat);
     wall.position.set(x,1.5,0);cityRoot.add(wall);
   }
   for(const z of [-CITY_HALF-12,CITY_HALF+12]) {
-    const wall=new THREE.Mesh(new THREE.BoxGeometry(900,3,3),wallMat);
+    const wall=new THREE.Mesh(new THREE.BoxGeometry(1600,3,3),wallMat);
     wall.position.set(0,1.5,z);cityRoot.add(wall);
   }
 }
@@ -2645,7 +2645,7 @@ function spawnCityTraffic() {
   const mesh=createCar([0xd9dfe2,0x273b52,0x7b858b,0x9b3f32,0xe0e0d8][Math.floor(Math.random()*5)],false,Math.floor(Math.random()*4));
   const axis=Math.random()<0.5?'x':'z';
   const sign=Math.random()<0.5?-1:1;
-  const road=Math.round((Math.random()*6-3))*CITY_BLOCK;
+  const road=Math.round((Math.random()*12-6))*CITY_BLOCK;
   const lane=(Math.random()<0.5?-1:1)*3.8;
   mesh.position.set(axis==='x'?player.position.x+(Math.random()-0.5)*180:road+lane,0,axis==='z'?player.position.z+(Math.random()-0.5)*180:road);
   mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
@@ -2717,13 +2717,19 @@ function updateOpenCity(dt,stats) {
   player.rotation.y=cityHeading;
   const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
   const oldPosition=player.position.clone();
-  player.position.addScaledVector(direction,citySpeedMps*dt);
+  // Driving on grass is possible, but it adds a small rolling resistance.
+  const roadDistanceX=Math.abs(player.position.x-Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK);
+  const roadDistanceZ=Math.abs(player.position.z-Math.round(player.position.z/CITY_BLOCK)*CITY_BLOCK);
+  const onRoad=Math.min(roadDistanceX,roadDistanceZ)<=11.5;
+  const surfaceFactor=onRoad?1:0.84;
+  if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
+  player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
   player.position.y=0;
   // Keep the player inside the connected city limits.
   player.position.x=THREE.MathUtils.clamp(player.position.x,-CITY_HALF+14,CITY_HALF-14);
   player.position.z=THREE.MathUtils.clamp(player.position.z,-CITY_HALF+14,CITY_HALF-14);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
-  const lateralSpeed=steer*citySpeedMps*0.12;
+  const lateralSpeed=steer*citySpeedMps*0.12*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
   player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*0.09,4,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
@@ -2818,7 +2824,7 @@ function updateOpenCity(dt,stats) {
   const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
   const nearestZ=Math.round(player.position.z/CITY_BLOCK)*CITY_BLOCK;
   const dx=Math.abs(player.position.x-nearestX),dz=Math.abs(player.position.z-nearestZ);
-  if(dx>11&&dz>11) {
+  if(dx>29&&dz>29) {
     const oldX=oldPosition.x,oldZ=oldPosition.z;
     if(dx>dz)player.position.x=oldX;else player.position.z=oldZ;
     citySpeedMps*=0.72;
@@ -2827,9 +2833,14 @@ function updateOpenCity(dt,stats) {
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
   camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
   camera.updateProjectionMatrix();
-  const camPos=player.localToWorld(new THREE.Vector3(0,5.8,-13.5));
-  const camTarget=player.localToWorld(new THREE.Vector3(0,1.1,13+fast*3));
-  camera.position.lerp(camPos,1-Math.exp(-5.5*dt));
+  // World-space chase camera: stay behind the direction of travel, not the
+  // model's possibly different local forward axis.
+  const cameraForward=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
+  const camPos=player.position.clone().addScaledVector(cameraForward,-15.5);
+  camPos.y+=6.2;
+  const camTarget=player.position.clone().addScaledVector(cameraForward,10+fast*4);
+  camTarget.y+=1.35;
+  camera.position.lerp(camPos,1-Math.exp(-4.2*dt));
   camera.lookAt(camTarget);
   cameraShake=THREE.MathUtils.damp(cameraShake,0,7,dt);
   if(cameraShake>0.01){camera.position.x+=Math.sin(performance.now()*0.03)*cameraShake*0.12;}
