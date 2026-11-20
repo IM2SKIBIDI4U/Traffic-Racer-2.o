@@ -3220,7 +3220,7 @@ if (key === 'arrowup' || key === 'w') setControl('accelerate', true);
 if (key === 'arrowdown' || key === 's') setControl('brake', true);
 if (key === ' ') setControl('drift', true);
 if (key === 'shift') setControl('nitro', true);
-if (key === 'f' && running && cityWorldReady) { if(cityOnFoot){cityOnFoot=false;if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}if(player)player.visible=true;}else exitCityVehicle(); }
+if (key === 'f' && running && cityWorldReady) { if(cityOnFoot){if(cityParkedCar&&cityAvatar&&cityAvatar.position.distanceTo(cityParkedCar.position)<7)enterCityVehicle(cityParkedCar);else if(cityCrimeHud)cityCrimeHud.textContent='WALK BACK TO YOUR PARKED CAR';}else exitCityVehicle(); }
 if (key === 'e' && running && cityWorldReady) { if(cityOnFoot){if(!tryEnterNearbyCityCar()&&cityCrimeHud)cityCrimeHud.textContent='GET CLOSER TO A TRAFFIC CAR';}else if(!attemptCityRobbery()) startDragRace(); }
 }, { passive: false });
 window.addEventListener('keyup', (event) => {
@@ -3340,7 +3340,7 @@ function exitCityVehicle() {
 function enterCityVehicle(target) {
   if(!cityOnFoot||!target)return false;
   if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}
-  if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}
+  if(target===cityParkedCar)cityParkedCar=null;
   if(player)player.visible=false;
   player=target;player.visible=true;player.position.y=0;
   cityHeading=player.rotation.y;citySpeedMps=0;cityOnFoot=false;
