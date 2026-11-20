@@ -3043,7 +3043,7 @@ function updateOpenCity(dt,stats) {
   camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
   camera.updateProjectionMatrix();
   // Use the shared camera-mode controller in every driving mode.
-  applyCameraMode(camera,player,dt);
+  applyCameraMode(camera,player,dt,1);
   cameraShake=THREE.MathUtils.damp(cameraShake,0,7,dt);
   if(cameraShake>0.01){camera.position.x+=Math.sin(performance.now()*0.03)*cameraShake*0.12;}
   updateProgression();
@@ -3128,22 +3128,16 @@ $('speed-lines').style.opacity = String(fast * 0.55);
 updateAudio();
 }
 function updateCamera(dt, fast) {
-camera.fov = THREE.MathUtils.damp(camera.fov, 68 + fast * 8 + (nitroActive ? 2 : 0), 2, dt);
-camera.updateProjectionMatrix();
-const position = player.localToWorld(new THREE.Vector3(0, 1.35, 0.15));
-const target = player.localToWorld(new THREE.Vector3(0, 1.3, -35 - fast * 8));
-if (dt === 0) camera.position.copy(position);
-else camera.position.lerp(position, 1 - Math.exp(-8 * dt));
-// Shake is a small, smooth, decaying offset from the camera's base position.
-// Never use fresh random offsets each frame: that creates permanent jitter.
-cameraShake = THREE.MathUtils.damp(cameraShake, 0, 7.5, dt);
-if (cameraShake > 0.001 && dt > 0) {
-  const t = performance.now() * 0.001;
-  camera.position.x += Math.sin(t * 28) * cameraShake * 0.16;
-  camera.position.y += Math.sin(t * 37) * cameraShake * 0.055;
-}
-camera.lookAt(target);
-applyCameraMode(camera, player, dt);
+  // Highway vehicles face local -Z; use the same presets with the correct
+  // forward direction instead of mixing the old camera and preset positions.
+  applyCameraMode(camera, player, dt, -1);
+  // Apply the smooth, decaying shake after the preset so it remains visible.
+  cameraShake = THREE.MathUtils.damp(cameraShake, 0, 7.5, dt);
+  if (cameraShake > 0.001 && dt > 0) {
+    const t = performance.now() * 0.001;
+    camera.position.x += Math.sin(t * 28) * cameraShake * 0.16;
+    camera.position.y += Math.sin(t * 37) * cameraShake * 0.055;
+  }
 }
 function resize() {
 const width = canvas.clientWidth || innerWidth;
