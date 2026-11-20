@@ -2601,26 +2601,69 @@ function createOpenCityWorld() {
       }
     }
   }
-  // Buildings occupy the middle of each block, leaving the intersections and
-  // street corridors completely clear for driving and pursuit.
+  // Raised sidewalks, curbs and streetlights give the roads a finished
+  // modern-city streetscape while keeping the 22-unit carriageways clear.
+  const curbMat=material(0xb4b7b3,0.9);
+  const poleMat=material(0x303a40,0.72,0.25);
+  const lampMat=new THREE.MeshBasicMaterial({color:0xffe6b2});
+  for(let i=-7;i<=7;i++) {
+    for(const side of [-1,1]) {
+      const curbV=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.28,1600),curbMat);
+      curbV.position.set(i*CITY_BLOCK+side*12.1,0.02,0);cityRoot.add(curbV);
+      const walkV=new THREE.Mesh(new THREE.BoxGeometry(3.0,0.22,1600),sidewalkCity);
+      walkV.position.set(i*CITY_BLOCK+side*14.0,-0.01,0);cityRoot.add(walkV);
+      const curbH=new THREE.Mesh(new THREE.BoxGeometry(1600,0.28,1.1),curbMat);
+      curbH.position.set(0,0.02,i*CITY_BLOCK+side*12.1);cityRoot.add(curbH);
+      const walkH=new THREE.Mesh(new THREE.BoxGeometry(1600,0.22,3.0),sidewalkCity);
+      walkH.position.set(0,-0.01,i*CITY_BLOCK+side*14.0);cityRoot.add(walkH);
+    }
+    if(i%2===0) for(let j=-7;j<=7;j++) for(const side of [-1,1]) {
+      const pole=new THREE.Group();
+      const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.16,7,7),poleMat);
+      stem.position.y=3.5;pole.add(stem);
+      const arm=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.12,0.12),poleMat);
+      arm.position.set(side*0.62,6.7,0);pole.add(arm);
+      const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6),lampMat);
+      bulb.position.set(side*1.25,6.55,0);pole.add(bulb);
+      pole.position.set(j*CITY_BLOCK+side*15.8,0,i*CITY_BLOCK+16);
+      cityRoot.add(pole);
+    }
+  }
+  // Buildings occupy the middle of each block. A taller downtown core,
+  // mixed mid-rise buildings, shopfronts and planted courtyards create an
+  // original open-world city skyline rather than repeated identical boxes.
   for(let gx=-7;gx<7;gx++) for(let gz=-7;gz<7;gz++) {
     const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
-    const count=4+Math.floor(Math.random()*4);
+    const downtown=Math.max(0,1-Math.hypot(cx,cz)/520);
+    const count=5+Math.floor(Math.random()*4);
     for(let n=0;n<count;n++) {
-      const w=8+Math.random()*10, d=8+Math.random()*10;
-      const h=12+Math.random()*48;
+      const w=7+Math.random()*9, d=7+Math.random()*9;
+      const towerChance=Math.random();
+      const h=towerChance<downtown*0.72?72+Math.random()*105: towerChance<0.55?38+Math.random()*42:12+Math.random()*28;
       const b=new THREE.Group();
-      const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facadeMats[Math.floor(Math.random()*facadeMats.length)]);
-      shell.position.y=h/2;
-      shell.castShadow=true; shell.receiveShadow=true; b.add(shell);
-      const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.82, h*0.62, 0.08),glassCity);
-      windows.position.set(0,h*0.56,d/2+0.05); b.add(windows);
-      b.position.set(cx+(Math.random()-0.5)*34,0,cz+(Math.random()-0.5)*34);
+      const facade=facadeMats[Math.floor(Math.random()*facadeMats.length)];
+      const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facade);
+      shell.position.y=h/2;shell.castShadow=true;shell.receiveShadow=true;b.add(shell);
+      const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.84,h*0.72,0.09),glassCity);
+      windows.position.set(0,h*0.55,d/2+0.06);b.add(windows);
+      const roof=new THREE.Mesh(new THREE.BoxGeometry(w*0.72,0.45,d*0.72),poleMat);
+      roof.position.y=h+0.22;b.add(roof);
+      // Ground-floor storefront band makes street level less repetitive.
+      const shop=new THREE.Mesh(new THREE.BoxGeometry(w*0.9,2.8,0.12),material(0x263c46,0.35,0.2));
+      shop.position.set(0,1.7,d/2+0.11);b.add(shop);
+      b.position.set(cx+(Math.random()-0.5)*31,0,cz+(Math.random()-0.5)*31);
       cityRoot.add(b);
     }
-    const park = new THREE.Mesh(new THREE.BoxGeometry(18,0.12,18),material(0x55734d,1));
-    park.position.set(cx,0,cz);
-    cityRoot.add(park);
+    const plaza=new THREE.Mesh(new THREE.BoxGeometry(15,0.16,15),material(0x55734d,1));
+    plaza.position.set(cx,0.01,cz);cityRoot.add(plaza);
+    for(const side of [-1,1]) {
+      const tree=new THREE.Group();
+      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,2.1,7),material(0x59402d,1));
+      trunk.position.y=1.05;tree.add(trunk);
+      const crown=new THREE.Mesh(new THREE.SphereGeometry(1.65,8,7),material(0x426b48,1));
+      crown.position.y=2.7;tree.add(crown);
+      tree.position.set(cx+side*5,0,cz+(side===-1?-5:5));cityRoot.add(tree);
+    }
   }
   // Mark the outer edge with simple barriers so the city feels bounded.
   const wallMat=material(0x46525a,0.9);
@@ -2653,18 +2696,25 @@ function spawnCityTraffic() {
   cityTraffic.push({mesh,axis,sign,speed:13+Math.random()*9,turnAt:0,turnCooldown:4});
 }
 function spawnCityPolice() {
-  if(cityPolice.length>=6)return;
+  if(cityPolice.filter(p=>!p.disabled).length>=6)return;
   const mesh=createCar(0x172b46,false,2);
   addPoliceLightbar(mesh);
-  const angle=cityHeading+Math.PI+(Math.random()-0.5)*1.2;
-  mesh.position.copy(player.position).add(new THREE.Vector3(Math.sin(angle)*54,0,Math.cos(angle)*54));
-  const axis=Math.random()<0.5?'x':'z';
+  // Spawn on an actual street behind the player, not randomly inside a block.
+  const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.7;
+  const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*58,0,Math.cos(angle)*58));
+  const axis=Math.abs(spawn.x-player.position.x)>=Math.abs(spawn.z-player.position.z)?'x':'z';
   const lane=(Math.random()<0.5?-1:1)*3.8;
-  if(axis==='x')mesh.position.z=Math.round(mesh.position.z/CITY_BLOCK)*CITY_BLOCK+lane;
-  else mesh.position.x=Math.round(mesh.position.x/CITY_BLOCK)*CITY_BLOCK+lane;
-  mesh.rotation.y=axis==='x'?(Math.cos(angle)>=0?Math.PI/2:-Math.PI/2):(Math.sin(angle)>=0?0:Math.PI);
+  if(axis==='x') {
+    const roadZ=Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK;
+    mesh.position.set(spawn.x,0,roadZ+lane);
+  } else {
+    const roadX=Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK;
+    mesh.position.set(roadX+lane,0,spawn.z);
+  }
+  const sign=axis==='x'?(player.position.x>=mesh.position.x?1:-1):(player.position.z>=mesh.position.z?1:-1);
+  mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
   scene.add(mesh);
-  cityPolice.push({mesh,axis,speed:0,health:200,disabled:false,ramCooldown:0,impact:new THREE.Vector3()});
+  cityPolice.push({mesh,axis,sign,lane,speed:0,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
 }
 function spawnCityRepairPickup() {
   if(cityRepairPickups.length>=3)return;
@@ -2783,42 +2833,72 @@ function updateOpenCity(dt,stats) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
     }
   }
-  // Police steer toward the player in world space, so they can follow every turn.
+  // Grid-based pursuit: police stay in their lane, choose turns only at
+  // intersections, and never continuously rotate toward a target off-road.
   while(cityPolice.filter(p=>!p.disabled).length<4)spawnCityPolice();
   for(const cop of cityPolice) {
     if(cop.disabled)continue;
     cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
-    const toPlayer=new THREE.Vector3(player.position.x-cop.mesh.position.x,0,player.position.z-cop.mesh.position.z);
-    const distance=toPlayer.length();
-    // Follow the street grid: police can only change axis at intersections.
-    const along=cop.axis==='x'?cop.mesh.position.x:cop.mesh.position.z;
+    cop.turnCooldown=Math.max(0,(cop.turnCooldown||0)-dt);
+    const mesh=cop.mesh;
+    const axis=cop.axis;
+    const along=axis==='x'?mesh.position.x:mesh.position.z;
+    const crossTarget=axis==='x'?player.position.z:player.position.x;
+    const alongTarget=axis==='x'?player.position.x:player.position.z;
     const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
-    if(Math.abs(along-junction)<4.5) {
-      const lane=(Math.random()<0.5?-1:1)*3.8;
-      if(cop.axis==='x'&&Math.abs(toPlayer.z)>Math.abs(toPlayer.x)*0.55) {
-        cop.axis='z';cop.mesh.position.x=junction+lane;
-      } else if(cop.axis==='z'&&Math.abs(toPlayer.x)>Math.abs(toPlayer.z)*0.55) {
-        cop.axis='x';cop.mesh.position.z=junction+lane;
+    const crossed=Math.abs(along-junction)<Math.max(0.9,cop.speed*dt+0.25);
+    if(crossed&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
+      cop.lastJunction=junction;
+      const crossDistance=Math.abs(crossTarget-(axis==='x'?mesh.position.z:mesh.position.x));
+      const alongDistance=Math.abs(alongTarget-along);
+      // Turn when the player is mainly in the other street direction.
+      if(crossDistance>alongDistance*0.72+12) {
+        cop.axis=axis==='x'?'z':'x';
+        const lane=(cop.lane||3.8);
+        if(cop.axis==='z')mesh.position.x=junction+lane;
+        else mesh.position.z=junction+lane;
       }
+      const newAlongTarget=cop.axis==='x'?player.position.x:player.position.z;
+      const newAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
+      cop.sign=newAlongTarget>=newAlong?1:-1;
+      cop.turnCooldown=1.1;
     }
-    const desired=cop.axis==='x'?(toPlayer.x>=0?Math.PI/2:-Math.PI/2):(toPlayer.z>=0?0:Math.PI);
-    let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
-    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
-    cop.speed=THREE.MathUtils.damp(cop.speed,Math.min(30,Math.max(17,Math.abs(citySpeedMps)+7)),1.4,dt);
-    const copDir=new THREE.Vector3(Math.sin(cop.mesh.rotation.y),0,Math.cos(cop.mesh.rotation.y));
-    cop.mesh.position.addScaledVector(copDir,cop.speed*dt);
-    if(distance<4.1&&cop.ramCooldown<=0) {
-      damagePlayer(3);cop.ramCooldown=0.8;
+    // If the player is behind on the same road, reverse at the next update
+    // rather than steering diagonally through buildings.
+    const desired=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
+    mesh.rotation.y=desired;
+    const distance=mesh.position.distanceTo(player.position);
+    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+9,19,34);
+    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,2.0,dt);
+    if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
+    else mesh.position.z+=cop.sign*cop.speed*dt;
+    // Keep the pursuit car inside the playable city and recycle it behind
+    // the player if it falls far outside the chase area.
+    if(Math.abs(mesh.position.x-player.position.x)>310||Math.abs(mesh.position.z-player.position.z)>310) {
+      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.45;
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*62,0,Math.cos(angle)*62));
+      cop.axis=Math.random()<0.5?'x':'z';
+      cop.lane=(Math.random()<0.5?-1:1)*3.8;
+      if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
+      else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
+      const target=cop.axis==='x'?player.position.x:player.position.z;
+      const here=cop.axis==='x'?mesh.position.x:mesh.position.z;
+      cop.sign=target>=here?1:-1;
+      cop.lastJunction=NaN;
+    }
+    if(distance<4.5&&cop.ramCooldown<=0) {
+      cop.ramCooldown=0.9;
       if(takedownCharge>=100&&actualSpeed>=(cars.find(c=>c.id===selectedCar)||cars[0]).maxSpeed*0.85) {
-        cop.disabled=true;scene.remove(cop.mesh);awardCredits(15);takedownCharge=0;
+        cop.disabled=true;scene.remove(mesh);awardCredits(15);takedownCharge=0;
         const toast=$('near-miss');if(toast){toast.textContent='CHARGED TAKEDOWN · +15 CREDITS';toast.classList.add('show');}
       } else {
-        const away=toPlayer.normalize().negate();
-        player.position.addScaledVector(away,1.5);
-        citySpeedMps*=0.78;cameraShake=Math.max(cameraShake,0.32);
+        damagePlayer(3);
+        const away=new THREE.Vector3(player.position.x-mesh.position.x,0,player.position.z-mesh.position.z).normalize();
+        player.position.addScaledVector(away,1.25);
+        citySpeedMps*=0.82;cameraShake=Math.max(cameraShake,0.32);
       }
     }
-    for(const bot of cityTraffic)cityVehicleCollision(cop.mesh,bot.mesh,cop.speed);
+    for(const bot of cityTraffic)cityVehicleCollision(mesh,bot.mesh,cop.speed);
   }
   // Buildings and block interiors are solid boundaries: stay on the streets.
   const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
