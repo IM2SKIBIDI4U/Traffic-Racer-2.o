@@ -899,7 +899,7 @@ const cityMaterials = {
   sidewalk: material(0x8d9290, 0.96),
   curb: material(0xc8c9c4, 0.9)
 };
-const addCityBuilding = (side, z, index) => {
+const addCityBuilding = (side, z, index, depthRow = 0) => {
   const group = new THREE.Group();
   const width = 5.5 + Math.random() * 4.5;
   const depth = 7 + Math.random() * 5;
@@ -949,7 +949,7 @@ const addCityBuilding = (side, z, index) => {
   rooftopUnit.position.set(0, height + 0.65, 0);
   group.add(rooftopUnit);
 
-  const lateral = side * (arguments.length > 3 && arguments[3] === 1
+  const lateral = side * (depthRow === 1
     ? 44 + Math.random() * 22
     : 22 + Math.random() * 10);
   group.userData.roadLateral = lateral;
