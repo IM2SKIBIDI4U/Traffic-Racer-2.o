@@ -1652,13 +1652,14 @@ function spawnPoliceChaser(offset = 0) {
   const roles = ['front', 'rear', 'left', 'right'];
   const role = roles[index % roles.length];
   const lateral = THREE.MathUtils.clamp(playerLateral + offset, -6.8, 6.8);
-  const pathZ = -28 - index * 8;
-  // Face the player while approaching from ahead on the road.
-  placeOnRoad(car, lateral, pathZ, Math.PI);
+  const pathZ = -52 - index * 9;
+  // Police begin well ahead and face the same direction as the player.
+  placeOnRoad(car, lateral, pathZ, 0);
   policeChasers.push({
-    mesh: car, pathZ, lateral, speed: 10, offset, role, health: 100, ramCooldown: 0, disabled: false,
+    mesh: car, pathZ, lateral, speed: 0, offset, role, health: 100, ramCooldown: 0, disabled: false,
     massKg: 1950, impactVelX: 0, impactVelZ: 0, angularVelocity: 0, collisionHeading: 0,
-    lateralVelocity: 0, longitudinalVelocity: 0
+    lateralVelocity: 0, longitudinalVelocity: 0, observedPlayerSpeed: 0,
+    observedBrake: 0, maneuver: 'approach'
   });
 }
 
@@ -1822,24 +1823,36 @@ function updatePoliceChase(dt) {
         unit.mesh.userData.policeLightParts[1].visible = phase === 1;
       }
 
-      // Aim for the player's current position and accelerate to make contact.
-      const targetZ = 7;
-      const targetLane = playerLateral;
-      const targetSpeed = Math.min(policeMaxSpeed, Math.max(90, actualSpeed + 28));
-      const approachRate = 1.65;
-      const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * approachRate, -9, 9);
-      unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 2.8, dt);
+      // The cruisers run a lead-and-brake manoeuvre instead of mirroring
+      // the player's inputs. Their view of player speed/braking is delayed,
+      // so they react a moment after the player rather than moving in sync.
+      unit.observedPlayerSpeed = THREE.MathUtils.damp(
+        unit.observedPlayerSpeed || 0, actualSpeed, 1.15, dt
+      );
+      unit.observedBrake = THREE.MathUtils.damp(
+        unit.observedBrake || 0, keys.brake ? 1 : 0, 1.05, dt
+      );
+      const targetLane = playerLateral + THREE.MathUtils.clamp(unit.offset * 0.22, -1.1, 1.1);
+      const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * 1.15, -5.5, 5.5);
+      unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 1.9, dt);
       unit.lateral += unit.lateralVelocity * dt;
       if (unit.lateral < -7.65 || unit.lateral > 7.65) {
         unit.lateral = THREE.MathUtils.clamp(unit.lateral, -7.65, 7.65);
         unit.lateralVelocity *= -0.18;
       }
-      unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, 1.8, dt);
-      const desiredLongitudinalVelocity = THREE.MathUtils.clamp((targetZ - unit.pathZ) * approachRate, -24, 24);
-      unit.longitudinalVelocity = THREE.MathUtils.damp(
-        unit.longitudinalVelocity || 0, desiredLongitudinalVelocity, 2.4, dt
-      );
-      unit.pathZ += unit.longitudinalVelocity * dt;
+
+      // First ease into the lane ahead of the player. Once close enough,
+      // slam the brakes and let the player catch up to the cruiser.
+      if (unit.maneuver !== 'brake' && unit.pathZ >= -17) {
+        unit.maneuver = 'brake';
+      }
+      const approachSpeed = Math.max(0, unit.observedPlayerSpeed - 22);
+      const brakeSpeed = Math.max(0, unit.observedPlayerSpeed - 48 - unit.observedBrake * 8);
+      const targetSpeed = Math.min(policeMaxSpeed, unit.maneuver === 'brake' ? brakeSpeed : approachSpeed);
+      unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, unit.maneuver === 'brake' ? 3.6 : 1.45, dt);
+      // Relative road motion: faster police move farther ahead; slower police
+      // drift back toward the player. This keeps the lead car in front.
+      unit.pathZ += (actualSpeed - unit.speed) / 3.6 * 2 * dt;
       // Carry collision momentum through subsequent frames instead of letting
       // pursuit steering erase the impact immediately.
       unit.lateral += (unit.impactVelX || 0) * dt;
@@ -1858,7 +1871,7 @@ function updatePoliceChase(dt) {
       // Collision impulses briefly push a cruiser away before its AI regains control.
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
       unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
-      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, Math.PI + (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
+      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
 
       // Solid collision against the player: police cars cannot drive through
       // the player's car. The contact nudges the cruiser away and bumps speed.
