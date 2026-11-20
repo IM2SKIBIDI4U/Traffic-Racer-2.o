@@ -131,6 +131,12 @@ let dragRaceTime = 0;
 let dragRaceHud = null;
 let dragRaceOpponent = null;
 let dragRaceOpponentSpeed = 0;
+let cityWantedLevel = 0;
+let cityLawbreakingTime = 0;
+let cityPoliceSpawnTimer = 0;
+let cityCrimeHud = null;
+const cityRaceMarkers = [{x:0,z:-520,label:'DRAG START'},{x:0,z:-220,label:'DRAG FINISH'}];
+const cityBusinessLocations = [{x:180,z:180,name:'CORNER STORE'},{x:-270,z:90,name:'JEWELRY SHOP'},{x:360,z:-270,name:'BANK'}];
 
 let repairSpawnTimer = 5;
 let policeCatchTime = 0;
@@ -478,7 +484,8 @@ model.updateWorldMatrix(true, true);
 const box = new THREE.Box3().setFromObject(model);
 const size = box.getSize(new THREE.Vector3());
 const length = Math.max(size.x, size.z);
-if (length > 0) model.scale.setScalar(4.25 / length);
+if (length > 0) if (!Number.isFinite(length) || length <= 0.01) throw new Error('Lexus model has invalid dimensions');
+model.scale.multiplyScalar(4.25 / length);
 model.updateWorldMatrix(true, true);
 const finalBox = new THREE.Box3().setFromObject(model);
 const center = finalBox.getCenter(new THREE.Vector3());
@@ -1468,6 +1475,8 @@ cityHeading = 0;
 cityDistance = 0;
 cityRepairTimer = 3;
 dragRaceActive=false;
+cityWantedLevel=0; cityLawbreakingTime=0; cityPoliceSpawnTimer=0;
+if(cityCrimeHud)cityCrimeHud.style.display='none';
 if(dragRaceOpponent)dragRaceOpponent.visible=false;
 if(dragRaceHud)dragRaceHud.style.display='none';
 for(const kit of cityRepairPickups)scene.remove(kit);
@@ -2858,6 +2867,20 @@ function updateCityMinimap(dt) {
     ctx.beginPath(); ctx.arc(x, y, 5.2, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
   }
+  // Drag-race start/finish markers and business locations are shown on the minimap.
+  const drawMapMarker=(wx,wz,color,label)=>{
+    const dx=wx-player.position.x,dz=wz-player.position.z;
+    const right=dx*Math.cos(heading)-dz*Math.sin(heading);
+    const forward=dx*Math.sin(heading)+dz*Math.cos(heading);
+    const x=cx+right*0.20,y=cy-forward*0.20;
+    if(x<7||x>185||y<7||y>185)return;
+    ctx.fillStyle=color;ctx.beginPath();ctx.arc(x,y,5,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1;ctx.stroke();
+    ctx.font='bold 7px Arial';ctx.fillStyle=color;ctx.fillText(label,x+6,y-5);
+  };
+  drawMapMarker(-0,-520,'#35e69a','RACE');
+  drawMapMarker(0,-220,'#ffd34d','FINISH');
+  for(const place of cityBusinessLocations)drawMapMarker(place.x,place.z,'#ff9b4a','JOB');
   // Player marker always stays in the middle and points toward the top.
   ctx.save();
   ctx.translate(cx, cy);
@@ -2940,6 +2963,42 @@ function updateOpenCity(dt,stats) {
   cityDistance+=Math.abs(citySpeedMps)*dt;
   score=Math.floor(cityDistance);
   updateDragRace(dt);
+  // Speeding is a fictional in-game offence that builds a wanted level.
+  if(actualSpeed>125) cityLawbreakingTime+=dt;
+  else cityLawbreakingTime=Math.max(0,cityLawbreakingTime-dt*1.4);
+  if(cityLawbreakingTime>2.5) {
+    cityWantedLevel=Math.min(5,Math.max(cityWantedLevel,1+Math.floor((actualSpeed-125)/35)));
+    cityLawbreakingTime=0;
+  }
+  if(!cityCrimeHud) {
+    cityCrimeHud=document.createElement('div');
+    Object.assign(cityCrimeHud.style,{position:'fixed',top:'14px',left:'14px',zIndex:'42',padding:'8px 11px',borderRadius:'8px',background:'rgba(5,12,20,.82)',color:'#fff',font:'bold 13px Arial',pointerEvents:'none'});
+    document.body.appendChild(cityCrimeHud);
+  }
+  cityCrimeHud.style.display=cityWantedLevel?'block':'none';
+  cityCrimeHud.textContent='WANTED '+ '★'.repeat(cityWantedLevel);
+  cityPoliceSpawnTimer-=dt;
+  if(cityWantedLevel>0 && cityPolice.filter(p=>!p.disabled).length<Math.min(6,cityWantedLevel+1) && cityPoliceSpawnTimer<=0) {
+    spawnCityPolice(); cityPoliceSpawnTimer=5.5;
+  }
+  // Active police cars pursue the player while wanted. The chase cools down after
+  // the player stays below the offence threshold for a while.
+  for(const cop of cityPolice) {
+    if(cop.disabled)continue;
+    const dx=player.position.x-cop.mesh.position.x,dz=player.position.z-cop.mesh.position.z;
+    const distance=Math.hypot(dx,dz);
+    const desired=Math.atan2(dx,dz);
+    let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
+    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
+    const speed=cityWantedLevel?Math.min(43,29+cityWantedLevel*2):0;
+    cop.mesh.position.x+=Math.sin(cop.mesh.rotation.y)*speed*dt;
+    cop.mesh.position.z+=Math.cos(cop.mesh.rotation.y)*speed*dt;
+    if(distance<3.7 && hitCooldown<=0) { damagePlayer(4+cityWantedLevel); citySpeedMps*=0.78; hitCooldown=0.9; }
+  }
+  if(cityWantedLevel>0 && cityLawbreakingTime===0 && actualSpeed<85) {
+    cityPoliceSpawnTimer-=dt*0.35;
+    if(cityPoliceSpawnTimer < -18) { cityWantedLevel=0; for(const cop of cityPolice){scene.remove(cop.mesh);cop.disabled=true;} }
+  }
   // Repair kits spawn on the streets and restore the existing health system.
   cityRepairTimer-=dt;
   if(cityRepairTimer<=0&&cityRepairPickups.length<3) {
