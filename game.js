@@ -114,6 +114,16 @@ let collisionHeading = 0;
 let gameMode = 'escape'; // This build has one mode: escape the police.
 let policeChasers = [];
 let repairPickups = [];
+let cityRoot = null;
+let cityTraffic = [];
+let cityPolice = [];
+let cityDistance = 0;
+let citySpeedMps = 0;
+let cityHeading = 0;
+let cityWorldReady = false;
+const CITY_BLOCK = 90;
+const CITY_HALF = 360;
+
 let repairSpawnTimer = 5;
 let policeCatchTime = 0;
 let escapeProgress = 0;
@@ -1124,8 +1134,10 @@ scene.add(post);
 scenery.push(post);
 }
 }
+
   addRoadsideDetails();
   addRoadsideLandmarks();
+  createOpenCityWorld();
 }
 
 function loadRoadsideModels() {
@@ -1443,6 +1455,18 @@ if (healthBar) {
 }
 actualSpeed = 0;
 steerVelocity = 0;
+citySpeedMps = 0;
+cityHeading = 0;
+cityDistance = 0;
+takedownCharge = 0;
+if (cityWorldReady) {
+  player.position.set(0,0,0);
+  player.rotation.set(0,0,0);
+  for (const bot of cityTraffic) scene.remove(bot.mesh);
+  for (const cop of cityPolice) scene.remove(cop.mesh);
+  cityTraffic.length = 0;
+  cityPolice.length = 0;
+}
 nitro = 100;
 nitroActive = false;
 spawnTimer = 0.75;
@@ -1453,7 +1477,7 @@ nearMissChain = 0;
 playerLateral = lanes.at(2);
 placeOnRoad(player, playerLateral, 7);
 player.rotation.set(0, roadHeading(7), 0);
-updateCamera(0, 0);
+if (!cityWorldReady) updateCamera(0, 0);
 clearTraffic();
 // Keep one consistent vehicle fleet for the whole run if the GLB finishes loading mid-race.
 activeTrafficVehicles = trafficVehicles.length ? trafficVehicles.slice() : null;
@@ -1467,8 +1491,8 @@ running = true;
 paused = false;
 // Put a vehicle on the road immediately. The timed spawner continues adding
 // traffic afterward, but the player never starts with an empty highway.
-if (traffic.length === 0) spawnTraffic();
-if (gameMode === 'escape') spawnPoliceChaser(0);
+if (!cityWorldReady && traffic.length === 0) spawnTraffic();
+if (!cityWorldReady && gameMode === 'escape') spawnPoliceChaser(0);
 spawnTimer = 0.75;
 showPage('');
 if (soundEnabled) {
@@ -2523,6 +2547,230 @@ function updateTraffic(dt, previousPlayer) {
     }
   }
 }
+
+
+// --- Open city driving world -------------------------------------------------
+// The legacy scrolling highway remains available as a fallback, but the escape
+// mode now runs on a real world-space street grid.
+function createOpenCityWorld() {
+  if (cityWorldReady) return;
+  cityWorldReady = true;
+  for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
+  cityRoot = new THREE.Group();
+  cityRoot.name = 'open_city_world';
+  scene.add(cityRoot);
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1800, 1800), material(0x53664e, 1));
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -0.18;
+  ground.receiveShadow = true;
+  cityRoot.add(ground);
+  const asphaltCity = material(0x303943, 0.96);
+  const sidewalkCity = material(0x858d8e, 0.95);
+  const laneCity = material(0xe4dfca, 0.85);
+  const facadeMats = [material(0x68727b,0.9),material(0x8a6253,0.9),material(0xb6a78d,0.9),material(0x354653,0.86),material(0x687d70,0.9)];
+  const glassCity = material(0x29495b,0.22,0.3);
+  // Seven-by-seven connected streets. Every horizontal/vertical crossing is
+  // a real open intersection, not a painted road prop.
+  for ( (let i=-4; i<=4; i++) {
+    const roadV = new THREE.Mesh(new THREE.BoxGeometry(22,0.16,900),asphaltCity);
+    roadV.position.set(i*CITY_BLOCK,-0.045,0);
+    roadV.receiveShadow=true;
+    cityRoot.add(roadV);
+    const roadH = new THREE.Mesh(new THREE.BoxGeometry(900,0.16,22),asphaltCity);
+    roadH.position.set(0,-0.045,i*CITY_BLOCK);
+    roadH.receiveShadow=true;
+    cityRoot.add(roadH);
+    for(let p=-4;p<=4;p++) {
+      for(const side of [-1,1]) {
+        const stripeV=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.035,3.2),laneCity);
+        stripeV.position.set(i*CITY_BLOCK+side*5.4,0.055,p*CITY_BLOCK+10);
+        cityRoot.add(stripeV);
+        const stripeH=new THREE.Mesh(new THREE.BoxGeometry(3.2,0.035,0.16),laneCity);
+        stripeH.position.set(p*CITY_BLOCK+10,0.055,i*CITY_BLOCK+side*5.4);
+        cityRoot.add(stripeH);
+      }
+    }
+  }
+  // Buildings occupy the middle of each block, leaving the intersections and
+  // street corridors completely clear for driving and pursuit.
+  for(let gx=-4;gx<4;gx++) for(let gz=-4;gz<4;gz++) {
+    const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
+    const count=2+Math.floor(Math.random()*3);
+    for(let n=0;n<count;n++) {
+      const w=10+Math.random()*15, d=10+Math.random()*15;
+      const h=12+Math.random()*48;
+      const b=new THREE.Group();
+      const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facadeMats[Math.floor(Math.random()*facadeMats.length)]);
+      shell.position.y=h/2;
+      shell.castShadow=true; shell.receiveShadow=true; b.add(shell);
+      const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.82, h*0.62, 0.08),glassCity);
+      windows.position.set(0,h*0.56,d/2+0.05); b.add(windows);
+      b.position.set(cx+(Math.random()-0.5)*43,0,cz+(Math.random()-0.5)*43);
+      cityRoot.add(b);
+    }
+    const park = new THREE.Mesh(new THREE.BoxGeometry(18,0.12,18),material(0x55734d,1));
+    park.position.set(cx,0,cz);
+    cityRoot.add(park);
+  }
+  // Mark the outer edge with simple barriers so the city feels bounded.
+  const wallMat=material(0x46525a,0.9);
+  for(const x of [-CITY_HALF-12,CITY_HALF+12]) {
+    const wall=new THREE.Mesh(new THREE.BoxGeometry(3,3,900),wallMat);
+    wall.position.set(x,1.5,0);cityRoot.add(wall);
+  }
+  for(const z of [-CITY_HALF-12,CITY_HALF+12]) {
+    const wall=new THREE.Mesh(new THREE.BoxGeometry(900,3,3),wallMat);
+    wall.position.set(0,1.5,z);cityRoot.add(wall);
+  }
+}
+function cityRoadPosition(position) {
+  const gx=Math.round(position.x/CITY_BLOCK)*CITY_BLOCK;
+  const gz=Math.round(position.z/CITY_BLOCK)*CITY_BLOCK;
+  const onVertical=Math.abs(position.x-gx)<CITY_BLOCK*0.5;
+  const onHorizontal=Math.abs(position.z-gz)<CITY_BLOCK*0.5;
+  return onVertical || onHorizontal;
+}
+function spawnCityTraffic() {
+  if(cityTraffic.length>=18)return;
+  const mesh=createCar([0xd9dfe2,0x273b52,0x7b858b,0x9b3f32,0xe0e0d8][Math.floor(Math.random()*5)],false,Math.floor(Math.random()*4));
+  const axis=Math.random()<0.5?'x':'z';
+  const sign=Math.random()<0.5?-1:1;
+  const road=Math.round((Math.random()*6-3))*CITY_BLOCK;
+  const lane=(Math.random()<0.5?-1:1)*3.8;
+  mesh.position.set(axis==='x'?road+lane:road,0,axis==='z'?road+lane:road);
+  mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
+  scene.add(mesh);
+  cityTraffic.push({mesh,axis,sign,speed:13+Math.random()*9,turnAt:0,turnCooldown:4});
+}
+function spawnCityPolice() {
+  if(cityPolice.length>=6)return;
+  const mesh=createCar(0x172b46,false,2);
+  addPoliceLightbar(mesh);
+  const angle=cityHeading+Math.PI+(Math.random()-0.5)*1.2;
+  mesh.position.copy(player.position).add(new THREE.Vector3(Math.sin(angle)*48,0,Math.cos(angle)*48));
+  mesh.rotation.y=angle;
+  scene.add(mesh);
+  cityPolice.push({mesh,speed:0,health:200,disabled:false,ramCooldown:0,impact:new THREE.Vector3()});
+}
+function cityVehicleCollision(mesh, other, speed) {
+  const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
+  const distance=Math.hypot(dx,dz);
+  if(distance>3.5 || distance<0.001)return false;
+  const nx=dx/distance,nz=dz/distance;
+  mesh.position.x+=nx*(3.5-distance)*0.55;
+  mesh.position.z+=nz*(3.5-distance)*0.55;
+  other.position.x-=nx*(3.5-distance)*0.45;
+  other.position.z-=nz*(3.5-distance)*0.45;
+  mesh.userData.cityImpact=(mesh.userData.cityImpact||0)+Math.min(12,speed*0.22);
+  other.userData.cityImpact=(other.userData.cityImpact||0)+Math.min(8,speed*0.14);
+  return true;
+}
+function updateOpenCity(dt,stats) {
+  nitroActive=keys.nitro&&nitro>0&&!keys.brake;
+  nitro=THREE.MathUtils.clamp(nitro+(nitroActive?-34:8)*dt,0,100);
+  const maxSpeed=(stats.maxSpeed+(nitroActive?45:0))/3.6;
+  const forward=keys.accelerate||autoAccel;
+  if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
+  else if(keys.brake) {
+    if(citySpeedMps>1.2)citySpeedMps=Math.max(0,citySpeedMps-(stats.braking/3.6+citySpeedMps*0.8)*dt);
+    else citySpeedMps=Math.max(-8,citySpeedMps-stats.acceleration/3.6*0.55*dt);
+  } else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
+  const steer=(keys.right?1:0)-(keys.left?1:0);
+  const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
+  cityHeading+=steer*1.35*speedFactor*Math.sign(citySpeedMps||1)*dt;
+  cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
+  player.rotation.y=cityHeading;
+  const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
+  const oldPosition=player.position.clone();
+  player.position.addScaledVector(direction,citySpeedMps*dt);
+  player.position.y=0;
+  // Keep the player inside the connected city limits.
+  player.position.x=THREE.MathUtils.clamp(player.position.x,-CITY_HALF+14,CITY_HALF-14);
+  player.position.z=THREE.MathUtils.clamp(player.position.z,-CITY_HALF+14,CITY_HALF-14);
+  const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
+  const lateralSpeed=steer*citySpeedMps*0.12;
+  player.position.addScaledVector(lateral,lateralSpeed*dt);
+  player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*0.09,4,dt);
+  for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
+  actualSpeed=Math.abs(citySpeedMps)*3.6;
+  if(actualSpeed>stats.maxSpeed*0.82)takedownCharge=Math.min(100,takedownCharge+dt*20);
+  takedownHud.textContent='TAKEDOWN CHARGE  '+Math.floor(takedownCharge)+'%';
+  cityDistance+=Math.abs(citySpeedMps)*dt;
+  score=Math.floor(cityDistance);
+  // Traffic uses the same grid and makes deliberate turns at intersections.
+  while(cityTraffic.length<12)spawnCityTraffic();
+  for(const bot of cityTraffic) {
+    bot.turnCooldown-=dt;
+    const dir=bot.axis==='x'?new THREE.Vector3(bot.sign,0,0):new THREE.Vector3(0,0,bot.sign);
+    bot.mesh.position.addScaledVector(dir,bot.speed*dt);
+    const along=bot.axis==='x'?bot.mesh.position.x:bot.mesh.position.z;
+    if(Math.abs(along/CITY_BLOCK-Math.round(along/CITY_BLOCK))<0.035&&bot.turnCooldown<=0&&Math.random()<0.08) {
+      if(bot.axis==='x')bot.axis='z';else bot.axis='x';
+      bot.sign=Math.random()<0.5?-1:1;
+      bot.turnCooldown=3.5;
+    }
+    bot.mesh.rotation.y=bot.axis==='x'?(bot.sign>0?Math.PI/2:-Math.PI/2):(bot.sign>0?0:Math.PI);
+    if(bot.mesh.position.x>CITY_HALF||bot.mesh.position.x< -CITY_HALF||bot.mesh.position.z>CITY_HALF||bot.mesh.position.z< -CITY_HALF) {
+      bot.mesh.position.copy(player.position).add(new THREE.Vector3((Math.random()-0.5)*180,0,(Math.random()-0.5)*180));
+    }
+    if(cityVehicleCollision(player,bot.mesh,Math.abs(citySpeedMps))) {
+      if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
+    }
+  }
+  // Police steer toward the player in world space, so they can follow every turn.
+  while(cityPolice.filter(p=>!p.disabled).length<4)spawnCityPolice();
+  for(const cop of cityPolice) {
+    if(cop.disabled)continue;
+    cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
+    const toPlayer=new THREE.Vector3(player.position.x-cop.mesh.position.x,0,player.position.z-cop.mesh.position.z);
+    const distance=toPlayer.length();
+    const desired=Math.atan2(toPlayer.x,toPlayer.z);
+    let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
+    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.55*dt,1.55*dt);
+    cop.speed=THREE.MathUtils.damp(cop.speed,Math.min(30,Math.max(17,Math.abs(citySpeedMps)+7)),1.4,dt);
+    const copDir=new THREE.Vector3(Math.sin(cop.mesh.rotation.y),0,Math.cos(cop.mesh.rotation.y));
+    cop.mesh.position.addScaledVector(copDir,cop.speed*dt);
+    if(distance<4.1&&cop.ramCooldown<=0) {
+      damagePlayer(3);cop.ramCooldown=0.8;
+      if(takedownCharge>=100&&actualSpeed>=(cars.find(c=>c.id===selectedCar)||cars[0]).maxSpeed*0.85) {
+        cop.disabled=true;scene.remove(cop.mesh);awardCredits(15);takedownCharge=0;
+        const toast=$('near-miss');if(toast){toast.textContent='CHARGED TAKEDOWN · +15 CREDITS';toast.classList.add('show');}
+      } else {
+        const away=toPlayer.normalize().negate();
+        player.position.addScaledVector(away,1.5);
+        citySpeedMps*=0.78;cameraShake=Math.max(cameraShake,0.32);
+      }
+    }
+    for(const bot of cityTraffic)cityVehicleCollision(cop.mesh,bot.mesh,cop.speed);
+  }
+  // Buildings and block interiors are solid boundaries: stay on the streets.
+  const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
+  const nearestZ=Math.round(player.position.z/CITY_BLOCK)*CITY_BLOCK;
+  const dx=Math.abs(player.position.x-nearestX),dz=Math.abs(player.position.z-nearestZ);
+  if(dx>11&&dz>11) {
+    const oldX=oldPosition.x,oldZ=oldPosition.z;
+    if(dx>dz)player.position.x=oldX;else player.position.z=oldZ;
+    citySpeedMps*=0.72;
+  }
+  if(hitCooldown>0)hitCooldown-=dt;
+  const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
+  camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
+  camera.updateProjectionMatrix();
+  const camPos=player.localToWorld(new THREE.Vector3(0,5.8,-13.5));
+  const camTarget=player.localToWorld(new THREE.Vector3(0,1.1,13+fast*3));
+  camera.position.lerp(camPos,1-Math.exp(-5.5*dt));
+  camera.lookAt(camTarget);
+  cameraShake=THREE.MathUtils.damp(cameraShake,0,7,dt);
+  if(cameraShake>0.01){camera.position.x+=Math.sin(performance.now()*0.03)*cameraShake*0.12;}
+  updateProgression();
+  $('score').textContent=Math.floor(score).toLocaleString();
+  $('speed').textContent=Math.round(actualSpeed).toString();
+  $('nitro-fill').style.width=nitro+'%';
+  $('nitro-label').textContent=nitroActive?'BOOST':nitro>99?'READY':'CHARGING';
+  $('speed-lines').style.opacity=String(fast*0.35);
+  updateAudio();
+}
+
 function update(dt) {
 for (let index = particles.length - 1; index >= 0; index--) {
 const p = particles[index];
@@ -2546,6 +2794,10 @@ if (!running || paused) return;
 updateWeather(dt);
 const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const stats = effectiveCarStats(spec);
+if (gameMode === 'escape' && cityWorldReady) {
+  updateOpenCity(dt, stats);
+  return;
+}
 const previousPlayer = { x: player.position.x, z: 7 };
 nitroActive = keys.nitro && nitro > 0 && !keys.brake;
 if (nitroActive) nitro = Math.max(0, nitro - dt * 34);
