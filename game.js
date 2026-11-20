@@ -1627,20 +1627,27 @@ function updatePoliceChase(dt) {
         unit.mesh.userData.policeLightParts[0].visible=phase===0;
         unit.mesh.userData.policeLightParts[1].visible=phase===1;
       }
-      // Each officer starts at 10 km/h, then builds speed during the chase.
-      // Each officer starts at 10 km/h and reaches 200 km/h over 300 metres of pursuit.
-      const policeMaxSpeed=Math.min(200,10+Math.max(0,score-unit.spawnScore)*(190/300));
-      unit.speed=policeMaxSpeed;
+      // All pursuit cars share the run's speed progression: 10 km/h at
+      // the start, smoothly reaching 200 km/h after the first 300 metres.
+      // Newly spawned backup joins at the current pursuit speed instead of
+      // being stuck at 10 km/h for another 300 metres.
+      const policeMaxSpeed=Math.min(200,10+Math.max(0,score)*(190/300));
+      unit.speed=THREE.MathUtils.damp(unit.speed,policeMaxSpeed,2.8,dt);
       const previousGap=unit.pathZ-7;
       // Positive pathZ is behind the player. A faster officer closes the gap.
       unit.pathZ+=(playerMps-unit.speed/3.6*2)*dt;
+      // Track the player's lane continuously, with small offsets so backup
+      // approaches from either side rather than stacking into one vehicle.
       const interceptLane=THREE.MathUtils.clamp(playerLateral+unit.offset,-7,7);
-      unit.lateral=THREE.MathUtils.damp(unit.lateral,interceptLane,2.1,dt);
+      unit.lateral=THREE.MathUtils.damp(unit.lateral,interceptLane,3.0,dt);
       placeOnRoad(unit.mesh,unit.lateral,unit.pathZ,0);
       const policeGap=unit.pathZ-7;
-      const reachedPlayer=previousGap>0&&policeGap<=5.8;
-      const closeEnough=Math.abs(policeGap)<5.8;
-      if((closeEnough||reachedPlayer) && Math.abs(unit.lateral-playerLateral)<2.65 && hitCooldown<=0) {
+      // Swept collision check catches a police car even if it crosses the
+      // player's position between two animation frames.
+      const gapCrossed=(previousGap===0 || policeGap===0 || Math.sign(previousGap)!==Math.sign(policeGap));
+      const closeEnough=Math.min(Math.abs(previousGap),Math.abs(policeGap))<6.8;
+      const laneClose=Math.abs(unit.lateral-playerLateral)<2.9;
+      if((closeEnough||gapCrossed) && laneClose && hitCooldown<=0) {
         hitCooldown=1.25;
         runHealth=Math.max(0,runHealth-1);
         $('health-value').textContent=String(runHealth);
@@ -1648,13 +1655,15 @@ function updatePoliceChase(dt) {
         addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
         unit.pathZ=42+Math.random()*18;
         unit.lateral=THREE.MathUtils.clamp(playerLateral+unit.offset,-6.8,6.8);
+        unit.speed=Math.max(10,unit.speed);
         const warning=$('damage-warning');
         warning.classList.add('show');
         window.clearTimeout(updatePoliceChase.damageTimeout);
         updatePoliceChase.damageTimeout=window.setTimeout(()=>warning.classList.remove('show'),700);
         if(runHealth<=0){$('game-over-title').textContent='BUSTED!';finishGame();return;}
       } else if(unit.pathZ < -24) {
-        // If an officer gets past without making contact, reset it behind you.
+        // If an officer gets past without making contact, send it around
+        // behind the player again while keeping its current pursuit speed.
         unit.pathZ=48+Math.random()*22;
         unit.lateral=THREE.MathUtils.clamp(playerLateral+unit.offset,-6.8,6.8);
       }
@@ -1982,8 +1991,10 @@ addSparks(player.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 
 updateWorld(dt);
 updatePlayer(dt);
 updateTraffic(dt, previousPlayer);
-updatePoliceChase(dt);
+// Advance distance before the chase so police speed and backup waves use
+// the current frame's distance, not a one-frame-old score.
 score += actualSpeed / 3.6 * dt;
+updatePoliceChase(dt);
 updateProgression();
 $('score').textContent = Math.floor(score).toLocaleString();
 $('speed').textContent = Math.round(actualSpeed).toString();
