@@ -2571,7 +2571,7 @@ function createOpenCityWorld() {
   const glassCity = material(0x29495b,0.22,0.3);
   // Seven-by-seven connected streets. Every horizontal/vertical crossing is
   // a real open intersection, not a painted road prop.
-  for ( (let i=-4; i<=4; i++) {
+  for (let i=-4; i<=4; i++) {
     const roadV = new THREE.Mesh(new THREE.BoxGeometry(22,0.16,900),asphaltCity);
     roadV.position.set(i*CITY_BLOCK,-0.045,0);
     roadV.receiveShadow=true;
