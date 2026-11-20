@@ -112,7 +112,7 @@ let collisionHeading = 0;
 let gameMode = 'escape'; // This build has one mode: escape the police.
 let policeChasers = [];
 let repairPickups = [];
-let repairSpawnTimer = 10;
+let repairSpawnTimer = 5;
 let policeCatchTime = 0;
 let escapeProgress = 0;
 let arrests = 0;
@@ -1320,7 +1320,7 @@ for (const unit of policeChasers) {
   unit.observedPlayerSpeed = 0;
 }
 playerHealth = 100;
-repairSpawnTimer = 8;
+repairSpawnTimer = 3;
 for (const pickup of repairPickups) scene.remove(pickup.mesh);
 repairPickups.length = 0;
 const healthValue = $('health-value');
@@ -1784,9 +1784,9 @@ function spawnRepairPickup() {
 function updateRepairPickups(dt) {
   if (!running) return;
   repairSpawnTimer -= dt;
-  if (repairSpawnTimer <= 0 && repairPickups.length < 2) {
+  if (repairSpawnTimer <= 0 && repairPickups.length < 3) {
     spawnRepairPickup();
-    repairSpawnTimer = 17 + Math.random() * 8;
+    repairSpawnTimer = 8 + Math.random() * 5;
   }
   const move = actualSpeed / 3.6 * 2 * dt;
   for (let i = repairPickups.length - 1; i >= 0; i--) {
@@ -2022,13 +2022,13 @@ const speedRatio = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed
 // Handling upgrades improve response without multiplying the steering angle
 // into extreme values at every speed.
 const handlingFactor = THREE.MathUtils.clamp((spec.handling || 8) / 8.5, 0.82, 1.2);
-const steeringInputAcceleration = steer * (4.2 + speedRatio * 7.2) * handlingFactor;
+const steeringInputAcceleration = steer * (6.2 + speedRatio * 9.0) * handlingFactor;
 if (steer !== 0) {
   steerVelocity += steeringInputAcceleration * dt * (drifting ? 1.18 : 1);
 } else {
-  steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, drifting ? 1.4 : 3.8, dt);
+  steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, drifting ? 1.7 : 4.6, dt);
 }
-steerVelocity = THREE.MathUtils.clamp(steerVelocity, -7.4, 7.4);
+steerVelocity = THREE.MathUtils.clamp(steerVelocity, -9.5, 9.5);
 // At a standstill the car should not slide sideways from steering alone.
 if (speedMps < 2) steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, 7, dt);
 const previousLateral = playerLateral;
