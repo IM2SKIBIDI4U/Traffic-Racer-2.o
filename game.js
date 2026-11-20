@@ -104,8 +104,9 @@ let engineGain;
 let engineFilter;
 let nearMissChain = 0;
 let hitCooldown = 0;
-let gameMode = load('tr-game-mode','escape');
-if (!['escape','police'].includes(gameMode)) gameMode = 'escape';
+let collisionRecoil = 0;
+let collisionYaw = 0;
+let gameMode = 'escape'; // This build has one mode: escape the police.
 let policeChasers = [];
 let policeCatchTime = 0;
 let escapeProgress = 0;
@@ -1273,6 +1274,8 @@ clearPoliceChase();
 setPlayerPoliceLights(gameMode === 'police');
 dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',dailyDate);
 hitCooldown=0;
+collisionRecoil=0;
+collisionYaw=0;
 const healthValue = $('health-value');
 if (healthValue) healthValue.closest('.health-heading')?.style.setProperty('display', 'none');
 const healthBar = $('health-bar');
@@ -1660,6 +1663,10 @@ function updatePoliceChase(dt) {
       }
 
       const role = unit.role;
+      // Police take a moment to notice braking, rather than instantly matching the player's speed.
+      unit.observedPlayerSpeed = THREE.MathUtils.damp(
+        unit.observedPlayerSpeed ?? actualSpeed, actualSpeed, 1.35, dt
+      );
       let targetZ = 7;
       let targetLane = playerLateral;
       let targetSpeed = policeMaxSpeed;
@@ -1668,7 +1675,7 @@ function updatePoliceChase(dt) {
       if (role === 'front') {
         // The lead cruiser pulls ahead, then slows down to block the road.
         targetZ = -10;
-        targetSpeed = Math.max(10, Math.min(policeMaxSpeed, actualSpeed - 42));
+        targetSpeed = Math.max(10, Math.min(policeMaxSpeed, unit.observedPlayerSpeed - 42));
         targetLane = playerLateral;
         approachRate = 0.72;
       } else if (role === 'rear') {
@@ -1779,7 +1786,9 @@ steerVelocity = THREE.MathUtils.damp(
   dt
 );
 const previousLateral = playerLateral;
-playerLateral = THREE.MathUtils.clamp(playerLateral + steerVelocity * dt, -8, 8);
+playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
+collisionRecoil = THREE.MathUtils.damp(collisionRecoil, 0, 2.8, dt);
+collisionYaw = THREE.MathUtils.damp(collisionYaw, 0, 3.2, dt);
 if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
 const lateralMotion = (playerLateral - previousLateral) / Math.max(dt, 0.001);
 const steeringYaw = THREE.MathUtils.damp(
@@ -1790,7 +1799,7 @@ const steeringYaw = THREE.MathUtils.damp(
 );
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1), 5, dt);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1) + collisionYaw, 5, dt);
 updateVehicleSignals(player, steer < 0 ? 'left' : steer > 0 ? 'right' : null, performance.now());
 player.userData.body.position.y = player.userData.bodyBaseY + Math.sin(performance.now() * 0.008) * Math.min(0.025, actualSpeed / 12000);
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
@@ -2014,7 +2023,10 @@ function updateTraffic(dt, previousPlayer) {
       item.targetLane = item.lane = item.lateralX;
       placeOnRoad(item.mesh, item.lateralX, item.pathZ,
         item.baseHeading + (item.oncoming ? Math.PI : 0) + (item.mesh.userData.laneSteer || 0));
-      actualSpeed = Math.max(0, actualSpeed - Math.max(18, actualSpeed * 0.24));
+      actualSpeed = Math.max(0, actualSpeed - Math.max(28, actualSpeed * 0.38));
+      collisionRecoil += -side * 7.5;
+      collisionYaw += side * 0.22;
+      cameraShake = Math.max(cameraShake, 0.32);
       steerVelocity += -side * 1.1;
       addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
       const warning=$('damage-warning');
@@ -2153,9 +2165,12 @@ for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
 button.addEventListener(type, release);
 }
 });
-$('mode-escape').addEventListener('click',()=>{gameMode='escape';save('tr-game-mode',gameMode);setPlayerPoliceLights(false);syncModeButtons();});
-$('mode-police').addEventListener('click',()=>{gameMode='police';save('tr-game-mode',gameMode);setPlayerPoliceLights(true);syncModeButtons();});
-syncModeButtons();
+// Hide the old mode picker: the game now has only the police-escape mode.
+const modePicker = $('mode-escape')?.parentElement;
+if (modePicker) modePicker.style.display = 'none';
+gameMode = 'escape';
+save('tr-game-mode', 'escape');
+setPlayerPoliceLights(false);
 $('menu-play').addEventListener('click', startGame);
 $('garage-play').addEventListener('click', startGame);
 $('retry-button').addEventListener('click', startGame);
