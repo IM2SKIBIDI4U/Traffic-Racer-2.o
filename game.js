@@ -129,6 +129,8 @@ const CITY_HALF = 630;
 let dragRaceActive = false;
 let dragRaceTime = 0;
 let dragRaceHud = null;
+let dragRaceOpponent = null;
+let dragRaceOpponentSpeed = 0;
 
 let repairSpawnTimer = 5;
 let policeCatchTime = 0;
@@ -1466,6 +1468,7 @@ cityHeading = 0;
 cityDistance = 0;
 cityRepairTimer = 3;
 dragRaceActive=false;
+if(dragRaceOpponent)dragRaceOpponent.visible=false;
 if(dragRaceHud)dragRaceHud.style.display='none';
 for(const kit of cityRepairPickups)scene.remove(kit);
 cityRepairPickups.length=0;
@@ -2750,6 +2753,7 @@ function spawnCityTraffic() {
 function spawnCityPolice() {
   if(cityPolice.filter(p=>!p.disabled).length>=6)return;
   const mesh=createCar(0x172b46,false,2);
+  mesh.userData.isPolice=true;
   addPoliceLightbar(mesh);
   // Spawn well behind the camera's view, on a nearby street.
   const angle=cityHeading+Math.PI;
@@ -2788,12 +2792,13 @@ function spawnCityRepairPickup() {
 function cityVehicleCollision(mesh, other, speed) {
   const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
   const distance=Math.hypot(dx,dz);
-  if(distance>3.5 || distance<0.001)return false;
+  const hitRadius=other.userData.isPolice?2.5:3.5;
+  if(distance>hitRadius || distance<0.001)return false;
   const nx=dx/distance,nz=dz/distance;
-  mesh.position.x+=nx*(3.5-distance)*0.55;
-  mesh.position.z+=nz*(3.5-distance)*0.55;
-  other.position.x-=nx*(3.5-distance)*0.45;
-  other.position.z-=nz*(3.5-distance)*0.45;
+  mesh.position.x+=nx*(hitRadius-distance)*0.55;
+  mesh.position.z+=nz*(hitRadius-distance)*0.55;
+  other.position.x-=nx*(hitRadius-distance)*0.45;
+  other.position.z-=nz*(hitRadius-distance)*0.45;
   mesh.userData.cityImpact=(mesh.userData.cityImpact||0)+Math.min(12,speed*0.22);
   other.userData.cityImpact=(other.userData.cityImpact||0)+Math.min(8,speed*0.14);
   return true;
@@ -2868,18 +2873,25 @@ function updateCityMinimap(dt) {
 }
 function startDragRace() {
   if (dragRaceActive || !player || Math.abs(player.position.x)>8 || Math.abs(player.position.z+520)>9 || Math.cos(cityHeading)<0.7) return;
-  dragRaceActive=true; dragRaceTime=0;
+  dragRaceActive=true; dragRaceTime=0; dragRaceOpponentSpeed=0;
+  if(!dragRaceOpponent)dragRaceOpponent=createCar(0xe3a52f,false,1);
+  dragRaceOpponent.position.set(4.25,0,-525); dragRaceOpponent.rotation.set(0,0,0); dragRaceOpponent.visible=true;
+  if(!dragRaceOpponent.parent)scene.add(dragRaceOpponent);
   if(!dragRaceHud) { dragRaceHud=document.createElement('div'); Object.assign(dragRaceHud.style,{position:'fixed',top:'18%',left:'50%',transform:'translateX(-50%)',zIndex:'45',padding:'12px 20px',background:'rgba(5,13,22,.9)',color:'white',font:'bold 22px Arial',borderRadius:'10px'}); document.body.appendChild(dragRaceHud); }
   dragRaceHud.style.display='block'; dragRaceHud.textContent='DRAG RACE · GO!';
 }
 function updateDragRace(dt) {
   if(!dragRaceActive) return;
   dragRaceTime+=dt;
+  dragRaceOpponentSpeed=THREE.MathUtils.damp(dragRaceOpponentSpeed,52,1.4,dt);
+  dragRaceOpponent.position.z+=dragRaceOpponentSpeed*dt;
   if(player.position.z>=-220 && Math.abs(player.position.x)<10) {
-    dragRaceHud.textContent='FINISH · '+dragRaceTime.toFixed(2)+'s · +$100'; awardCredits(100); dragRaceActive=false;
+    const won=player.position.z>=dragRaceOpponent.position.z;
+    dragRaceHud.textContent=won?'YOU WIN · '+dragRaceTime.toFixed(2)+'s · +$250':'YOU LOSE · '+dragRaceTime.toFixed(2)+'s';
+    awardCredits(won?250:50); dragRaceActive=false; dragRaceOpponent.visible=false;
     window.setTimeout(()=>{dragRaceHud.style.display='none';},3000);
   } else if(player.position.z < -560 || Math.abs(player.position.x)>20) {
-    dragRaceHud.textContent='RACE LEFT · TRY AGAIN'; dragRaceActive=false;
+    dragRaceHud.textContent='RACE LEFT · TRY AGAIN'; dragRaceActive=false; if(dragRaceOpponent)dragRaceOpponent.visible=false;
     window.setTimeout(()=>{dragRaceHud.style.display='none';},2500);
   } else dragRaceHud.textContent='DRAG RACE · '+dragRaceTime.toFixed(2)+'s';
 }
