@@ -117,6 +117,8 @@ let repairPickups = [];
 let cityRoot = null;
 let cityTraffic = [];
 let cityPolice = [];
+let cityRepairPickups = [];
+let cityRepairTimer = 3;
 let cityDistance = 0;
 let citySpeedMps = 0;
 let cityHeading = 0;
@@ -1458,6 +1460,9 @@ steerVelocity = 0;
 citySpeedMps = 0;
 cityHeading = 0;
 cityDistance = 0;
+cityRepairTimer = 3;
+for(const kit of cityRepairPickups)scene.remove(kit);
+cityRepairPickups.length=0;
 takedownCharge = 0;
 if (cityWorldReady) {
   player.position.set(0,0,0);
@@ -2661,6 +2666,21 @@ function spawnCityPolice() {
   scene.add(mesh);
   cityPolice.push({mesh,axis,speed:0,health:200,disabled:false,ramCooldown:0,impact:new THREE.Vector3()});
 }
+function spawnCityRepairPickup() {
+  if(cityRepairPickups.length>=3)return;
+  const kit=new THREE.Group();
+  const green=new THREE.MeshStandardMaterial({color:0x35d66b,emissive:0x0d5b24,emissiveIntensity:0.55});
+  const vertical=new THREE.Mesh(new THREE.BoxGeometry(0.42,1.25,0.28),green);
+  const horizontal=new THREE.Mesh(new THREE.BoxGeometry(1.05,0.38,0.28),green);
+  kit.add(vertical,horizontal);
+  const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
+  const nearestZ=Math.round(player.position.z/CITY_BLOCK)*CITY_BLOCK;
+  if(Math.random()<0.5)kit.position.set(nearestX+(Math.random()<0.5?-4:4),1,player.position.z+(Math.random()-0.5)*100);
+  else kit.position.set(player.position.x+(Math.random()-0.5)*100,1,nearestZ+(Math.random()<0.5?-4:4));
+  kit.userData.rotationSpeed=1.4;
+  scene.add(kit);
+  cityRepairPickups.push(kit);
+}
 function cityVehicleCollision(mesh, other, speed) {
   const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
   const distance=Math.hypot(dx,dz);
@@ -2712,6 +2732,22 @@ function updateOpenCity(dt,stats) {
   takedownHud.textContent='TAKEDOWN CHARGE  '+Math.floor(takedownCharge)+'%';
   cityDistance+=Math.abs(citySpeedMps)*dt;
   score=Math.floor(cityDistance);
+  // Repair kits spawn on the streets and restore the existing health system.
+  cityRepairTimer-=dt;
+  if(cityRepairTimer<=0&&cityRepairPickups.length<3) {
+    spawnCityRepairPickup();
+    cityRepairTimer=8+Math.random()*5;
+  }
+  for(let i=cityRepairPickups.length-1;i>=0;i--) {
+    const kit=cityRepairPickups[i];
+    kit.rotation.y+=dt*(kit.userData.rotationSpeed||1.4);
+    if(kit.position.distanceTo(player.position)<3.3&&playerHealth<100) {
+      playerHealth=Math.min(100,playerHealth+35);
+      updateHealthDisplay();
+      scene.remove(kit);cityRepairPickups.splice(i,1);
+      const toast=$('near-miss');if(toast){toast.textContent='REPAIR KIT · +35% HEALTH';toast.classList.add('show');}
+    }
+  }
   // Traffic uses the same grid and makes deliberate turns at intersections.
   while(cityTraffic.length<12)spawnCityTraffic();
   for(const bot of cityTraffic) {
