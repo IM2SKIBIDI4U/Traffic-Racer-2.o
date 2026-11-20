@@ -2835,53 +2835,49 @@ function updateOpenCity(dt,stats) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
     }
   }
-  // Grid-based pursuit: police stay in their lane, choose turns only at
-  // intersections, and never continuously rotate toward a target off-road.
-  while(cityPolice.filter(p=>!p.disabled).length<4)spawnCityPolice();
+  // Lightweight grid pursuit. Police use simple axis-aligned navigation,
+  // avoid expensive police-vs-traffic collision checks, and focus on the player.
+  let activePolice=0;
+  for(const cop of cityPolice)if(!cop.disabled)activePolice++;
+  while(activePolice<3){spawnCityPolice();activePolice++;}
   for(const cop of cityPolice) {
     if(cop.disabled)continue;
     cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
     cop.turnCooldown=Math.max(0,(cop.turnCooldown||0)-dt);
     const mesh=cop.mesh;
-    const axis=cop.axis;
-    const along=axis==='x'?mesh.position.x:mesh.position.z;
-    const crossTarget=axis==='x'?player.position.z:player.position.x;
-    const alongTarget=axis==='x'?player.position.x:player.position.z;
+    let dx=player.position.x-mesh.position.x;
+    let dz=player.position.z-mesh.position.z;
+    let along=cop.axis==='x'?mesh.position.x:mesh.position.z;
+    const crossDistance=cop.axis==='x'?Math.abs(dz):Math.abs(dx);
+    const alongDistance=cop.axis==='x'?Math.abs(dx):Math.abs(dz);
     const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
-    const crossed=Math.abs(along-junction)<Math.max(0.9,cop.speed*dt+0.25);
-    if(crossed&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
+    const atJunction=Math.abs(along-junction)<Math.max(1.2,cop.speed*dt+0.35);
+    if(atJunction&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
       cop.lastJunction=junction;
-      const crossDistance=Math.abs(crossTarget-(axis==='x'?mesh.position.z:mesh.position.x));
-      const alongDistance=Math.abs(alongTarget-along);
-      // Turn when the player is mainly in the other street direction.
-      if(crossDistance>alongDistance*0.72+12) {
-        cop.axis=axis==='x'?'z':'x';
-        const lane=(cop.lane||3.8);
-        if(cop.axis==='z')mesh.position.x=junction+lane;
-        else mesh.position.z=junction+lane;
+      if(crossDistance>alongDistance+9) {
+        cop.axis=cop.axis==='x'?'z':'x';
+        if(cop.axis==='z')mesh.position.x=junction+(cop.lane||3.8);
+        else mesh.position.z=junction+(cop.lane||3.8);
       }
-      const newAlongTarget=cop.axis==='x'?player.position.x:player.position.z;
-      const newAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
-      cop.sign=newAlongTarget>=newAlong?1:-1;
-      cop.turnCooldown=1.1;
+      cop.turnCooldown=0.65;
     }
-    // If the player is behind on the same road, reverse at the next update
-    // rather than steering diagonally through buildings.
-    const desired=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
-    mesh.rotation.y=desired;
-    const distance=mesh.position.distanceTo(player.position);
-    // Keep police substantially faster than the player so they close gaps
-    // quickly, while retaining a speed cap for stable city-grid movement.
-    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+17,30,43);
-    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,4.8,dt);
+    // Always head toward the player along the current street.
+    const targetAlong=cop.axis==='x'?player.position.x:player.position.z;
+    const currentAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
+    cop.sign=targetAlong>=currentAlong?1:-1;
+    mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
+    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+19,34,46);
+    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,5.5,dt);
     if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
     else mesh.position.z+=cop.sign*cop.speed*dt;
-    // Keep the pursuit car inside the playable city and recycle it behind
-    // the player if it falls far outside the chase area.
-    if(Math.abs(mesh.position.x-player.position.x)>310||Math.abs(mesh.position.z-player.position.z)>310) {
-      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.32;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*36,0,Math.cos(angle)*36));
-      cop.axis=Math.random()<0.5?'x':'z';
+    dx=player.position.x-mesh.position.x;
+    dz=player.position.z-mesh.position.z;
+    const distanceSq=dx*dx+dz*dz;
+    // Recycle distant cruisers instead of letting them get lost across the map.
+    if(distanceSq>230*230) {
+      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.22;
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*30,0,Math.cos(angle)*30));
+      cop.axis=Math.abs(Math.sin(angle))>Math.abs(Math.cos(angle))?'x':'z';
       cop.lane=(Math.random()<0.5?-1:1)*3.8;
       if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
       else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
@@ -2889,20 +2885,17 @@ function updateOpenCity(dt,stats) {
       const here=cop.axis==='x'?mesh.position.x:mesh.position.z;
       cop.sign=target>=here?1:-1;
       cop.lastJunction=NaN;
+      cop.speed=36;
     }
-    if(distance<4.5&&cop.ramCooldown<=0) {
-      cop.ramCooldown=0.9;
-      if(takedownCharge>=100&&actualSpeed>=(cars.find(c=>c.id===selectedCar)||cars[0]).maxSpeed*0.85) {
-        cop.disabled=true;scene.remove(mesh);awardCredits(15);takedownCharge=0;
-        const toast=$('near-miss');if(toast){toast.textContent='CHARGED TAKEDOWN · +15 CREDITS';toast.classList.add('show');}
-      } else {
-        damagePlayer(3);
-        const away=new THREE.Vector3(player.position.x-mesh.position.x,0,player.position.z-mesh.position.z).normalize();
-        player.position.addScaledVector(away,1.25);
-        citySpeedMps*=0.82;cameraShake=Math.max(cameraShake,0.32);
-      }
+    if(distanceSq<6.0*6.0&&cop.ramCooldown<=0) {
+      cop.ramCooldown=1.0;
+      damagePlayer(5);
+      const distance=Math.sqrt(distanceSq)||1;
+      player.position.x+=(dx/distance)*1.5;
+      player.position.z+=(dz/distance)*1.5;
+      citySpeedMps*=0.78;
+      cameraShake=Math.max(cameraShake,0.38);
     }
-    for(const bot of cityTraffic)cityVehicleCollision(mesh,bot.mesh,cop.speed);
   }
   // Buildings and block interiors are solid boundaries: stay on the streets.
   const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
