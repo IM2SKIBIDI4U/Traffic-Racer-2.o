@@ -1068,7 +1068,7 @@ function spawnTraffic() {
   const oncoming = roadMode === 'two-way' && lane < 0;
   const difficulty = Math.min(8, Math.floor(score / 500));
   const paceOffset = (Math.random() - 0.5) * 24;
-  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset, 45, 205);
+  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset, 45, 90);
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
   // In Police mode, keep exactly one marked suspect active at a time.
@@ -1116,7 +1116,7 @@ function spawnTraffic() {
   }
   attachTrafficTurnSignals(car);
   const baseHeading = car.rotation.y;
-  const trafficDirectionOffset = oncoming ? 0 : Math.PI;
+  const trafficDirectionOffset = (oncoming ? 0 : Math.PI) + Math.PI;
   placeOnRoad(car, lane, z, baseHeading + trafficDirectionOffset);
   if (night) {
     const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
@@ -1652,8 +1652,9 @@ function spawnPoliceChaser(offset = 0) {
   const roles = ['front', 'rear', 'left', 'right'];
   const role = roles[index % roles.length];
   const lateral = THREE.MathUtils.clamp(playerLateral + offset, -6.8, 6.8);
-  const pathZ = 42 + index * 8;
-  placeOnRoad(car, lateral, pathZ, 0);
+  const pathZ = -28 - index * 8;
+  // Face the player while approaching from ahead on the road.
+  placeOnRoad(car, lateral, pathZ, Math.PI);
   policeChasers.push({
     mesh: car, pathZ, lateral, speed: 10, offset, role, health: 100, ramCooldown: 0, disabled: false,
     massKg: 1950, impactVelX: 0, impactVelZ: 0, angularVelocity: 0, collisionHeading: 0,
@@ -1811,7 +1812,7 @@ function updatePoliceChase(dt) {
       const offset = (index % 2 === 0 ? -1 : 1) * (1.2 + (index % 3) * 0.65);
       spawnPoliceChaser(offset);
     }
-    const policeMaxSpeed = Math.min(200, 10 + Math.max(0, score) * (190 / 300));
+    const policeMaxSpeed = Math.min(200, 90 + Math.max(0, score) * (110 / 900));
     for (const unit of policeChasers) {
       if (unit.disabled) continue;
       unit.ramCooldown = Math.max(0, (unit.ramCooldown || 0) - dt);
@@ -1824,7 +1825,7 @@ function updatePoliceChase(dt) {
       // Aim for the player's current position and accelerate to make contact.
       const targetZ = 7;
       const targetLane = playerLateral;
-      const targetSpeed = Math.min(policeMaxSpeed, Math.max(55, actualSpeed + 28));
+      const targetSpeed = Math.min(policeMaxSpeed, Math.max(90, actualSpeed + 28));
       const approachRate = 1.65;
       const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * approachRate, -9, 9);
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 2.8, dt);
@@ -1857,7 +1858,7 @@ function updatePoliceChase(dt) {
       // Collision impulses briefly push a cruiser away before its AI regains control.
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
       unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
-      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
+      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, Math.PI + (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
 
       // Solid collision against the player: police cars cannot drive through
       // the player's car. The contact nudges the cruiser away and bumps speed.
@@ -2151,10 +2152,10 @@ function updateTraffic(dt, previousPlayer) {
       const gap = leader ? item.pathZ - leader.pathZ : Infinity;
       // Continuously adapt each car to the live player/police pace. A small
       // per-car offset keeps traffic varied without making it crawl or fly past.
-      const paceTarget = THREE.MathUtils.clamp(getTrafficPaceKmh() + (item.paceOffset || 0), 45, 205);
+      const paceTarget = THREE.MathUtils.clamp(getTrafficPaceKmh() + (item.paceOffset || 0), 45, 90);
       item.targetSpeed = THREE.MathUtils.damp(item.targetSpeed, paceTarget, 0.7, dt);
       const personalityFactor = item.drivingStyle < 0.25 ? 0.96 : item.drivingStyle > 0.75 ? 1.05 : 1;
-      const desiredCruise = THREE.MathUtils.clamp(item.targetSpeed * personalityFactor, 45, 210);
+      const desiredCruise = THREE.MathUtils.clamp(item.targetSpeed * personalityFactor, 45, 90);
 
       if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
         const laneOptions = roadMode === 'one-way'
