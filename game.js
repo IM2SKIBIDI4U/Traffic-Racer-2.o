@@ -126,6 +126,9 @@ let cityHeading = 0;
 let cityWorldReady = false;
 const CITY_BLOCK = 90;
 const CITY_HALF = 630;
+let dragRaceActive = false;
+let dragRaceTime = 0;
+let dragRaceHud = null;
 
 let repairSpawnTimer = 5;
 let policeCatchTime = 0;
@@ -1462,6 +1465,8 @@ citySpeedMps = 0;
 cityHeading = 0;
 cityDistance = 0;
 cityRepairTimer = 3;
+dragRaceActive=false;
+if(dragRaceHud)dragRaceHud.style.display='none';
 for(const kit of cityRepairPickups)scene.remove(kit);
 cityRepairPickups.length=0;
 takedownCharge = 0;
@@ -2688,6 +2693,15 @@ function createOpenCityWorld() {
     windows.castShadow=false;windows.receiveShadow=false;
     cityRoot.add(windows);
   }
+  // Drag-race gates mark the central avenue start and finish.
+  const raceGateMat=material(0x293a45,0.55,0.25);
+  for(const z of [-520,-220]) {
+    const gate=new THREE.Group();
+    const left=new THREE.Mesh(new THREE.BoxGeometry(0.5,5,0.5),raceGateMat); left.position.set(-9,2.5,0);
+    const right=left.clone(); right.position.x=9;
+    const top=new THREE.Mesh(new THREE.BoxGeometry(18.5,0.5,0.5),raceGateMat); top.position.y=5;
+    gate.add(left,right,top); gate.position.z=z; cityRoot.add(gate);
+  }
   // Mark the outer edge with simple barriers so the city feels bounded.
   const wallMat=material(0x46525a,0.9);
   for(const x of [-CITY_HALF-12,CITY_HALF+12]) {
@@ -2837,6 +2851,23 @@ function updateCityMinimap(dt) {
   ctx.fillStyle = '#45d9ff'; ctx.fillText('YOU', 8, 15);
   ctx.fillStyle = '#ff6569'; ctx.fillText('POLICE', 42, 15);
 }
+function startDragRace() {
+  if (dragRaceActive || !player || Math.abs(player.position.x)>8 || Math.abs(player.position.z+520)>9 || Math.cos(cityHeading)<0.7) return;
+  dragRaceActive=true; dragRaceTime=0;
+  if(!dragRaceHud) { dragRaceHud=document.createElement('div'); Object.assign(dragRaceHud.style,{position:'fixed',top:'18%',left:'50%',transform:'translateX(-50%)',zIndex:'45',padding:'12px 20px',background:'rgba(5,13,22,.9)',color:'white',font:'bold 22px Arial',borderRadius:'10px'}); document.body.appendChild(dragRaceHud); }
+  dragRaceHud.style.display='block'; dragRaceHud.textContent='DRAG RACE · GO!';
+}
+function updateDragRace(dt) {
+  if(!dragRaceActive) return;
+  dragRaceTime+=dt;
+  if(player.position.z>=-220 && Math.abs(player.position.x)<10) {
+    dragRaceHud.textContent='FINISH · '+dragRaceTime.toFixed(2)+'s · +$100'; awardCredits(100); dragRaceActive=false;
+    window.setTimeout(()=>{dragRaceHud.style.display='none';},3000);
+  } else if(player.position.z < -560 || Math.abs(player.position.x)>20) {
+    dragRaceHud.textContent='RACE LEFT · TRY AGAIN'; dragRaceActive=false;
+    window.setTimeout(()=>{dragRaceHud.style.display='none';},2500);
+  } else dragRaceHud.textContent='DRAG RACE · '+dragRaceTime.toFixed(2)+'s';
+}
 function updateOpenCity(dt,stats) {
   if(!takedownHud) {
     takedownHud=document.createElement('div');
@@ -2881,6 +2912,7 @@ function updateOpenCity(dt,stats) {
   takedownHud.textContent='TAKEDOWN CHARGE  '+Math.floor(takedownCharge)+'%';
   cityDistance+=Math.abs(citySpeedMps)*dt;
   score=Math.floor(cityDistance);
+  updateDragRace(dt);
   // Repair kits spawn on the streets and restore the existing health system.
   cityRepairTimer-=dt;
   if(cityRepairTimer<=0&&cityRepairPickups.length<3) {
@@ -2926,94 +2958,7 @@ function updateOpenCity(dt,stats) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
     }
   }
-  // Grid-aware pursuit: cops choose the street axis that closes the
-  // largest part of the route, then make the required turn at intersections.
-  let activePolice=0;
-  for(const cop of cityPolice)if(!cop.disabled)activePolice++;
-  while(activePolice<3){spawnCityPolice();activePolice++;}
-  for(const cop of cityPolice) {
-    if(cop.disabled)continue;
-    cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
-    cop.turnCooldown=Math.max(0,(cop.turnCooldown||0)-dt);
-    const mesh=cop.mesh;
-    // Each cruiser attacks a different close position so they try to
-    // get in front of, beside, or behind the player instead of trailing.
-    const copRole=cityPolice.indexOf(cop)%3;
-    const forwardX=Math.sin(cityHeading), forwardZ=Math.cos(cityHeading);
-    const rightX=Math.cos(cityHeading), rightZ=-Math.sin(cityHeading);
-    const leadOffset=copRole===0?8:copRole===1?-2:-2;
-    const sideOffset=copRole===0?0:copRole===1?-7:7;
-    const targetX=player.position.x+forwardX*leadOffset+rightX*sideOffset;
-    const targetZ=player.position.z+forwardZ*leadOffset+rightZ*sideOffset;
-    let dx=targetX-mesh.position.x;
-    let dz=targetZ-mesh.position.z;
-    const distanceSq=dx*dx+dz*dz;
-    // Hard failsafe: if a cruiser falls more than 140 m behind/away from
-    // the player, put it back on a nearby street about 10 m behind them.
-    const playerDx=player.position.x-mesh.position.x;
-    const playerDz=player.position.z-mesh.position.z;
-    if(playerDx*playerDx+playerDz*playerDz>140*140) {
-      // Re-enter far enough behind the player to stay outside the camera view.
-      const behind=cityHeading+Math.PI;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*55,0,Math.cos(behind)*55));
-      cop.axis=Math.abs(Math.sin(behind))>Math.abs(Math.cos(behind))?'x':'z';
-      cop.lane=(Math.random()<0.5?-1:1)*3.8;
-      if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
-      else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
-      cop.sign=cop.axis==='x'?(player.position.x>=mesh.position.x?1:-1):(player.position.z>=mesh.position.z?1:-1);
-      mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
-      dx=targetX-mesh.position.x;dz=targetZ-mesh.position.z;
-      cop.lastJunction=NaN;
-      cop.turnCooldown=0.9;
-      cop.speed=Math.max(cop.speed||0,48);
-    }
-    const along=cop.axis==='x'?mesh.position.x:mesh.position.z;
-    const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
-    const atJunction=Math.abs(along-junction)<Math.max(1.8,cop.speed*dt+0.65);
-    if(atJunction&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
-      cop.lastJunction=junction;
-      // Re-plan only at intersections. Never flip the driving direction in
-      // the middle of a street when the moving interception target passes by.
-      const axisGapX=Math.abs(dx), axisGapZ=Math.abs(dz);
-      const wantAxis=axisGapX>axisGapZ+8?'x':axisGapZ>axisGapX+8?'z':cop.axis;
-      if(wantAxis!==cop.axis) {
-        if(wantAxis==='x')mesh.position.z=junction+(cop.lane||3.8);
-        else mesh.position.x=junction+(cop.lane||3.8);
-        cop.axis=wantAxis;
-      }
-      const intersectionTarget=cop.axis==='x'?targetX:targetZ;
-      const intersectionPosition=cop.axis==='x'?mesh.position.x:mesh.position.z;
-      const intersectionError=intersectionTarget-intersectionPosition;
-      if(Math.abs(intersectionError)>5)cop.sign=intersectionError>0?1:-1;
-      cop.turnCooldown=0.9;
-    }
-    mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
-    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+30,48,78);
-    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,5.5,dt);
-    if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
-    else mesh.position.z+=cop.sign*cop.speed*dt;
-    const hitDx=player.position.x-mesh.position.x;
-    const hitDz=player.position.z-mesh.position.z;
-    const hitDistanceSq=hitDx*hitDx+hitDz*hitDz;
-    // Arcade ram damage scales with the closing speed at contact.
-    if(hitDistanceSq<5.8*5.8&&cop.ramCooldown<=0) {
-      cop.ramCooldown=1.0;
-      const distance=Math.sqrt(hitDistanceSq)||1;
-      const nx=hitDx/distance,nz=hitDz/distance;
-      const copVelX=cop.axis==='x'?cop.sign*cop.speed:0;
-      const copVelZ=cop.axis==='z'?cop.sign*cop.speed:0;
-      const playerVelX=forwardX*citySpeedMps;
-      const playerVelZ=forwardZ*citySpeedMps;
-      const closingSpeed=Math.max(0,(copVelX-playerVelX)*nx+(copVelZ-playerVelZ)*nz);
-      const ramDamage=THREE.MathUtils.clamp(3+closingSpeed*0.22,3,20);
-      damagePlayer(ramDamage);
-      const shove=THREE.MathUtils.clamp(0.8+closingSpeed*0.035,0.8,3.0);
-      player.position.x+=nx*shove;
-      player.position.z+=nz*shove;
-      citySpeedMps*=THREE.MathUtils.clamp(0.9-closingSpeed*0.002,0.68,0.9);
-      cameraShake=Math.max(cameraShake,THREE.MathUtils.clamp(0.28+closingSpeed*0.012,0.28,0.85));
-    }
-  }
+  // Free-roam mode: no automatic police chase.
   updateCityMinimap(dt);
   // Real building collision: test only buildings in the nearby 3x3 block
   // neighbourhood, then resolve the car against each building's footprint.
@@ -3174,6 +3119,7 @@ if (key === 'arrowup' || key === 'w') setControl('accelerate', true);
 if (key === 'arrowdown' || key === 's') setControl('brake', true);
 if (key === ' ') setControl('drift', true);
 if (key === 'shift') setControl('nitro', true);
+if (key === 'e' && running && cityWorldReady) startDragRace();
 }, { passive: false });
 window.addEventListener('keyup', (event) => {
 const key = event.key.toLowerCase();
