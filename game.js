@@ -1276,6 +1276,11 @@ dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',da
 hitCooldown=0;
 collisionRecoil=0;
 collisionYaw=0;
+for (const unit of policeChasers) {
+  unit.lateralVelocity = 0;
+  unit.longitudinalVelocity = 0;
+  unit.observedPlayerSpeed = 0;
+}
 const healthValue = $('health-value');
 if (healthValue) healthValue.closest('.health-heading')?.style.setProperty('display', 'none');
 const healthBar = $('health-bar');
@@ -1626,14 +1631,18 @@ function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLe
   const overlapZ = policeLength + otherLength - Math.abs(dz);
   if (overlapX <= 0 || overlapZ <= 0) return false;
 
-  // Move the police car along the axis with the least penetration. This
-  // keeps its actual hitbox outside the other vehicle instead of allowing
-  // the meshes to pass through one another.
-  if (overlapX < overlapZ) {
-    policeUnit.lateral += (Math.sign(dx) || (policeUnit.offset >= 0 ? 1 : -1)) * (overlapX + 0.08);
-    policeUnit.lateral = THREE.MathUtils.clamp(policeUnit.lateral, -8.1, 8.1);
+  // Keep the police car inside the road. If there is no room to resolve
+  // sideways (for example, beside a guardrail), resolve front-to-back instead.
+  const side = Math.sign(dx) || (policeUnit.offset >= 0 ? 1 : -1);
+  const sideTarget = policeUnit.lateral + side * (overlapX + 0.12);
+  const canSeparateSideways = sideTarget >= -7.65 && sideTarget <= 7.65;
+  if (overlapX < overlapZ && canSeparateSideways) {
+    policeUnit.lateral = sideTarget;
+    policeUnit.lateralVelocity = (policeUnit.lateralVelocity || 0) * 0.25;
   } else {
-    policeUnit.pathZ += (Math.sign(dz) || 1) * (overlapZ + 0.08);
+    const frontBackSide = Math.sign(dz) || 1;
+    policeUnit.pathZ += frontBackSide * (overlapZ + 0.12);
+    policeUnit.longitudinalVelocity = (policeUnit.longitudinalVelocity || 0) * 0.35;
   }
   return true;
 }
@@ -1692,9 +1701,21 @@ function updatePoliceChase(dt) {
         approachRate = 0.62;
       }
 
+      // Pursuit steering accelerates toward a target instead of teleporting
+      // the cruiser to a desired position every frame.
+      const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * approachRate, -5.5, 5.5);
+      unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 2.8, dt);
+      unit.lateral += unit.lateralVelocity * dt;
+      if (unit.lateral < -7.65 || unit.lateral > 7.65) {
+        unit.lateral = THREE.MathUtils.clamp(unit.lateral, -7.65, 7.65);
+        unit.lateralVelocity *= -0.18;
+      }
       unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, 1.8, dt);
-      unit.pathZ = THREE.MathUtils.damp(unit.pathZ, targetZ, approachRate, dt);
-      unit.lateral = THREE.MathUtils.damp(unit.lateral, targetLane, 1.15, dt);
+      const desiredLongitudinalVelocity = THREE.MathUtils.clamp((targetZ - unit.pathZ) * approachRate, -12, 12);
+      unit.longitudinalVelocity = THREE.MathUtils.damp(
+        unit.longitudinalVelocity || 0, desiredLongitudinalVelocity, 2.4, dt
+      );
+      unit.pathZ += unit.longitudinalVelocity * dt;
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
 
       // Solid collision against the player: police cars cannot drive through
@@ -1705,18 +1726,28 @@ function updatePoliceChase(dt) {
         player.userData.collisionHalfLength || 2.1
       );
       if (playerHit) {
-        actualSpeed = Math.max(0, actualSpeed - 3.5);
+        // A police cruiser has substantial mass: hitting it costs player speed
+        // and deflects the player's car instead of letting the player bulldoze it.
+        const impactSide = Math.sign(playerLateral - unit.lateral) || (unit.offset >= 0 ? 1 : -1);
+        const relativeSpeed = Math.max(0, actualSpeed - (unit.speed || 0));
+        actualSpeed = Math.max(0, actualSpeed - Math.min(34, 9 + relativeSpeed * 0.22));
+        collisionRecoil += impactSide * Math.min(8.5, 2.8 + relativeSpeed * 0.055);
+        collisionYaw -= impactSide * 0.16;
+        cameraShake = Math.max(cameraShake, 0.28);
+        // Prevent repeated frame-by-frame impacts from adding unlimited force.
+        unit.speed = Math.max(0, (unit.speed || 0) - relativeSpeed * 0.08);
         placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
       }
 
       // Police cruisers also have solid hitboxes against every normal traffic
       // vehicle and against each other.
       for (const trafficCar of traffic) {
-        separatePoliceHitbox(
+        const trafficHit = separatePoliceHitbox(
           unit, trafficCar.pathZ, trafficCar.lateralX,
           trafficCar.mesh.userData.collisionHalfWidth || 1.05,
           trafficCar.mesh.userData.collisionHalfLength || 2.1
         );
+        if (trafficHit) unit.speed = Math.max(0, (unit.speed || 0) - 1.2);
       }
       for (const otherPolice of policeChasers) {
         if (otherPolice === unit) break;
