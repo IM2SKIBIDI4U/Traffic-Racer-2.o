@@ -2722,9 +2722,9 @@ function spawnCityPolice() {
   if(cityPolice.filter(p=>!p.disabled).length>=6)return;
   const mesh=createCar(0x172b46,false,2);
   addPoliceLightbar(mesh);
-  // Spawn on an actual street behind the player, not randomly inside a block.
-  const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.32;
-  const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*34,0,Math.cos(angle)*34));
+  // Spawn well behind the camera's view, on a nearby street.
+  const angle=cityHeading+Math.PI;
+  const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*55,0,Math.cos(angle)*55));
   const axis=Math.abs(spawn.x-player.position.x)>=Math.abs(spawn.z-player.position.z)?'x':'z';
   const lane=(Math.random()<0.5?-1:1)*3.8;
   if(axis==='x') {
@@ -2936,13 +2936,13 @@ function updateOpenCity(dt,stats) {
     cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
     cop.turnCooldown=Math.max(0,(cop.turnCooldown||0)-dt);
     const mesh=cop.mesh;
-    // Three cruisers use separate arcade interception lanes: one pressures
-    // ahead while the others try to occupy the player's left/right approaches.
+    // Each cruiser attacks a different close position so they try to
+    // get in front of, beside, or behind the player instead of trailing.
     const copRole=cityPolice.indexOf(cop)%3;
     const forwardX=Math.sin(cityHeading), forwardZ=Math.cos(cityHeading);
     const rightX=Math.cos(cityHeading), rightZ=-Math.sin(cityHeading);
-    const leadOffset=copRole===0?22:0;
-    const sideOffset=copRole===1?-17:copRole===2?17:0;
+    const leadOffset=copRole===0?8:copRole===1?-2:-2;
+    const sideOffset=copRole===0?0:copRole===1?-7:7;
     const targetX=player.position.x+forwardX*leadOffset+rightX*sideOffset;
     const targetZ=player.position.z+forwardZ*leadOffset+rightZ*sideOffset;
     let dx=targetX-mesh.position.x;
@@ -2953,8 +2953,9 @@ function updateOpenCity(dt,stats) {
     const playerDx=player.position.x-mesh.position.x;
     const playerDz=player.position.z-mesh.position.z;
     if(playerDx*playerDx+playerDz*playerDz>140*140) {
+      // Re-enter far enough behind the player to stay outside the camera view.
       const behind=cityHeading+Math.PI;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*10,0,Math.cos(behind)*10));
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*55,0,Math.cos(behind)*55));
       cop.axis=Math.abs(Math.sin(behind))>Math.abs(Math.cos(behind))?'x':'z';
       cop.lane=(Math.random()<0.5?-1:1)*3.8;
       if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
@@ -2998,16 +2999,23 @@ function updateOpenCity(dt,stats) {
     const hitDx=player.position.x-mesh.position.x;
     const hitDz=player.position.z-mesh.position.z;
     const hitDistanceSq=hitDx*hitDx+hitDz*hitDz;
-    // Contact is deliberately arcade-like: a short pressure hit, not a
-    // realistic vehicle-impact simulation.
-    if(hitDistanceSq<6.2*6.2&&cop.ramCooldown<=0) {
-      cop.ramCooldown=1.15;
-      damagePlayer(4);
+    // Arcade ram damage scales with the closing speed at contact.
+    if(hitDistanceSq<5.8*5.8&&cop.ramCooldown<=0) {
+      cop.ramCooldown=1.0;
       const distance=Math.sqrt(hitDistanceSq)||1;
-      player.position.x+=(hitDx/distance)*1.15;
-      player.position.z+=(hitDz/distance)*1.15;
-      citySpeedMps*=0.84;
-      cameraShake=Math.max(cameraShake,0.34);
+      const nx=hitDx/distance,nz=hitDz/distance;
+      const copVelX=cop.axis==='x'?cop.sign*cop.speed:0;
+      const copVelZ=cop.axis==='z'?cop.sign*cop.speed:0;
+      const playerVelX=forwardX*citySpeedMps;
+      const playerVelZ=forwardZ*citySpeedMps;
+      const closingSpeed=Math.max(0,(copVelX-playerVelX)*nx+(copVelZ-playerVelZ)*nz);
+      const ramDamage=THREE.MathUtils.clamp(3+closingSpeed*0.22,3,20);
+      damagePlayer(ramDamage);
+      const shove=THREE.MathUtils.clamp(0.8+closingSpeed*0.035,0.8,3.0);
+      player.position.x+=nx*shove;
+      player.position.z+=nz*shove;
+      citySpeedMps*=THREE.MathUtils.clamp(0.9-closingSpeed*0.002,0.68,0.9);
+      cameraShake=Math.max(cameraShake,THREE.MathUtils.clamp(0.28+closingSpeed*0.012,0.28,0.85));
     }
   }
   updateCityMinimap(dt);
