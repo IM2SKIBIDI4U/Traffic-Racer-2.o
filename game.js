@@ -86,6 +86,7 @@ let night = load('tr-night', 'false') === 'true';
 
 let player;
 let playerLateral = lanes.at(2);
+let cityDriving = false;
 let running = false;
 let paused = false;
 let score = 0;
@@ -1051,6 +1052,36 @@ for (let z = -209, crossIndex = 0; z < 30; z += 66, crossIndex++) {
   scenery.push(crossStreet);
 }
 
+// Highway exits connect the main road to the parallel neighborhood streets.
+for (const side of [-1, 1]) {
+  for (const z of [-198, -88, 22]) {
+    const exitRamp = new THREE.Group();
+    const rampSurface = new THREE.Mesh(new THREE.BoxGeometry(8.5, 0.18, 42), sideStreetMat);
+    rampSurface.position.y = -0.015;
+    exitRamp.add(rampSurface);
+    for (const edgeX of [-4.1, 4.1]) {
+      const edgeLine = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.04, 42), streetLineMat);
+      edgeLine.position.set(edgeX, 0.105, 0);
+      exitRamp.add(edgeLine);
+    }
+    exitRamp.userData.roadLateral = side * 24;
+    exitRamp.userData.roadRotationOffset = side * 0.58;
+    placeOnRoad(exitRamp, side * 24, z, side * 0.58);
+    scene.add(exitRamp);
+    scenery.push(exitRamp);
+    const exitSign = new THREE.Group();
+    const post = new THREE.Mesh(new THREE.BoxGeometry(0.16, 2.3, 0.16), cityMaterials.dark);
+    post.position.y = 1.15;
+    const board = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.85, 0.16), material(0x176b45, 0.72));
+    board.position.set(0, 2.35, 0);
+    exitSign.add(post, board);
+    exitSign.userData.roadLateral = side * 13.4;
+    placeOnRoad(exitSign, side * 13.4, z - 8);
+    scene.add(exitSign);
+    scenery.push(exitSign);
+  }
+}
+
 // Small green spaces and tree groups break up the building rows.
 const parkGroundMat = material(0x536f50, 1);
 const treeTrunkMat = material(0x594333, 1);
@@ -1694,7 +1725,7 @@ for (const prop of scenery) {
   const lateral = prop.userData.roadLateral ?? prop.position.x;
   prop.userData.roadLateral = lateral;
   const y = prop.position.y;
-  placeOnRoad(prop, lateral, roadZ);
+  placeOnRoad(prop, lateral, roadZ, prop.userData.roadRotationOffset || 0);
   prop.position.y = y;
 }
 for (const ground of grounds) {
@@ -1790,7 +1821,7 @@ function resolveVehicleImpulse(a, b, normalX, normalZ, massA, massB, restitution
   return { impulse, aX, aZ, bX, bZ, aAngular, bAngular };
 }
 
-function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLength) {
+function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLength, keepPolicePlanted = false) {
   const policeWidth = policeUnit.mesh.userData.collisionHalfWidth || 1.08;
   const policeLength = policeUnit.mesh.userData.collisionHalfLength || 2.4;
   const dx = policeUnit.lateral - otherLane;
@@ -1804,7 +1835,7 @@ function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLe
   const side = Math.sign(dx) || (policeUnit.offset >= 0 ? 1 : -1);
   const sideTarget = policeUnit.lateral + side * (overlapX + 0.12);
   const canSeparateSideways = sideTarget >= -7.65 && sideTarget <= 7.65;
-  if (overlapX < overlapZ && canSeparateSideways) {
+  if (!keepPolicePlanted && overlapX < overlapZ && canSeparateSideways) {
     policeUnit.lateral = sideTarget;
     policeUnit.lateralVelocity = (policeUnit.lateralVelocity || 0) * 0.25;
   } else {
@@ -2015,7 +2046,8 @@ function updatePoliceChase(dt) {
       const playerHit = separatePoliceHitbox(
         unit, 7, playerLateral,
         player.userData.collisionHalfWidth || 1.05,
-        player.userData.collisionHalfLength || 2.1
+        player.userData.collisionHalfLength || 2.1,
+        true
       );
       if (playerHit) {
         damagePlayer(3);
@@ -2045,20 +2077,21 @@ function updatePoliceChase(dt) {
           halfLength: player.userData.collisionHalfLength || 2.1
         };
         const policeBody = {
-          vx: (unit.lateralVelocity || 0) + (unit.impactVelX || 0),
-          vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: unit.angularVelocity || 0,
+          vx: 0,
+          vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: 0,
           halfWidth: unit.mesh.userData.collisionHalfWidth || 1.08,
           halfLength: unit.mesh.userData.collisionHalfLength || 2.4
         };
         const contact = resolveVehicleImpulse(
           playerBody, policeBody, normalX, normalZ,
-          player.userData.massKg || 1750, unit.massKg || 1950, 0.1
+          player.userData.massKg || 1750, 9000, 0.06
         );
         steerVelocity += contact.aX;
         actualSpeed = THREE.MathUtils.clamp(actualSpeed + contact.aZ * 3.6, 0, 260);
-        unit.impactVelX = policeBody.vx - (unit.lateralVelocity || 0);
+        unit.impactVelX = 0;
+        unit.lateralVelocity = 0;
         unit.impactVelZ = policeBody.vz - unit.speed / 3.6;
-        unit.angularVelocity = policeBody.omega;
+        unit.angularVelocity = 0;
         collisionYaw += THREE.MathUtils.clamp(-contact.aX * 0.025, -0.2, 0.2);
         collisionAngularVelocity = playerBody.omega;
         cameraShake = Math.max(cameraShake, 0.22);
@@ -2153,7 +2186,8 @@ steerVelocity = THREE.MathUtils.clamp(steerVelocity, -9.5, 9.5);
 // At a standstill the car should not slide sideways from steering alone.
 if (speedMps < 2) steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, 7, dt);
 const previousLateral = playerLateral;
-playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
+playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -47, 47);
+cityDriving = Math.abs(playerLateral) > 14;
 collisionHeading = THREE.MathUtils.clamp(collisionHeading + collisionAngularVelocity * dt, -0.48, 0.48);
 // Angular velocity and heading both settle, so a hit can turn the car
 // without leaving it permanently crabbed sideways.
@@ -2161,7 +2195,7 @@ collisionAngularVelocity = THREE.MathUtils.damp(collisionAngularVelocity, 0, 2.2
 collisionHeading = THREE.MathUtils.damp(collisionHeading, 0, 1.35, dt);
 collisionRecoil = THREE.MathUtils.damp(collisionRecoil, 0, 2.8, dt);
 collisionYaw = THREE.MathUtils.damp(collisionYaw, 0, 3.2, dt);
-if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
+if (Math.abs(playerLateral) >= 46.9) steerVelocity *= 0.35;
 const lateralMotion = (playerLateral - previousLateral) / Math.max(dt, 0.001);
 const currentSpeedMps = actualSpeed / 3.6;
 const previousSpeedMps = player.userData.previousSpeedMps ?? currentSpeedMps;
@@ -2535,7 +2569,7 @@ takedownHud.textContent = 'TAKEDOWN CHARGE  ' + Math.floor(takedownCharge) + '%'
 if (keys.brake) actualSpeed = Math.max(0, actualSpeed - (stats.braking + actualSpeed * 0.12) * dt);
 else if (throttle) actualSpeed = Math.min(maxSpeed, actualSpeed + stats.acceleration * (nitroActive ? 1.55 : 1) * dt);
 else actualSpeed = Math.max(0, actualSpeed - (2 + actualSpeed * 0.018) * dt);
-if (Math.abs(player.position.x) > 7.5) actualSpeed = Math.max(0, actualSpeed - 20 * dt);
+if (Math.abs(playerLateral) > 9 && Math.abs(playerLateral) < 14) actualSpeed = Math.max(0, actualSpeed - 20 * dt);
 if (nitroActive && Math.random() < dt * 12) {
 addSparks(player.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 0.8, 0.3, -2.4)), 1);
 }
