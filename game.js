@@ -1668,7 +1668,7 @@ function spawnPoliceChaser(offset = 0) {
   // Police begin behind the player, then accelerate to pass and lead.
   placeOnRoad(car, lateral, pathZ, 0);
   policeChasers.push({
-    mesh: car, pathZ, lateral, speed: 0, offset, role, health: 100, ramCooldown: 0, disabled: false,
+    mesh: car, pathZ, lateral, speed: 0, offset, role, health: 200, ramCooldown: 0, disabled: false,
     massKg: 1950, impactVelX: 0, impactVelZ: 0, angularVelocity: 0, collisionHeading: 0,
     lateralVelocity: 0, longitudinalVelocity: 0, observedPlayerSpeed: 0,
     observedBrake: 0, maneuver: 'approach'
@@ -1915,7 +1915,7 @@ function updatePoliceChase(dt) {
         const ramSpeed = Math.max(0, actualSpeed - unit.speed * 0.35);
         if (unit.ramCooldown <= 0 && ramSpeed >= 25) {
           // A proper high-speed ram can disable a cruiser in one or two hits.
-          const ramDamage = THREE.MathUtils.clamp(22 + (ramSpeed - 25) * 0.82, 22, 90);
+          const ramDamage = THREE.MathUtils.clamp(22 + (ramSpeed - 25) * 1.15, 22, 100);
           unit.health = Math.max(0, unit.health - ramDamage);
           unit.ramCooldown = 0.55;
           if (unit.health <= 0) {
