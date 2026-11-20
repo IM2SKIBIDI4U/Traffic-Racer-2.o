@@ -1898,9 +1898,11 @@ function updatePoliceChase(dt) {
       if (playerHit) {
         damagePlayer(3);
         const ramSpeed = Math.max(0, actualSpeed - unit.speed * 0.35);
-        if (unit.ramCooldown <= 0 && ramSpeed >= 45) {
-          unit.health = Math.max(0, unit.health - (ramSpeed >= 90 ? 55 : 30));
-          unit.ramCooldown = 0.85;
+        if (unit.ramCooldown <= 0 && ramSpeed >= 25) {
+          // A proper high-speed ram can disable a cruiser in one or two hits.
+          const ramDamage = THREE.MathUtils.clamp(22 + (ramSpeed - 25) * 0.82, 22, 90);
+          unit.health = Math.max(0, unit.health - ramDamage);
+          unit.ramCooldown = 0.55;
           if (unit.health <= 0) {
             unit.disabled = true;
             scene.remove(unit.mesh);
@@ -2015,31 +2017,20 @@ const spec = cars.find((car) => car.id === selectedCar) || cars.at(0);
 const steer = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
 const drifting = keys.drift && steer !== 0;
 const speedMps = actualSpeed / 3.6;
-const speedRatio = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed), 0, 1.25);
-// A speed-sensitive steering rack: more steering angle is available at low
-// speed, while high-speed steering is deliberately more restrained.
-const maxSteerAngle = THREE.MathUtils.clamp(0.34 - speedRatio * 0.19, 0.12, 0.34);
-const steeringAngleTarget = steer * maxSteerAngle * (spec.handling || 1);
-player.userData.steeringAngle = THREE.MathUtils.damp(
-  player.userData.steeringAngle || 0,
-  steeringAngleTarget,
-  steer === 0 ? 4.2 : 5.8,
-  dt
-);
-// Lateral movement comes from forward speed and steering angle, not an
-// instantaneous lane-position change. Grip limits lateral acceleration.
-const desiredLateralVelocity = THREE.MathUtils.clamp(
-  speedMps * Math.tan(player.userData.steeringAngle || 0),
-  -5.2,
-  5.2
-);
-const gripResponse = drifting ? 2.0 : 4.6;
-const lateralVelocityChange = THREE.MathUtils.clamp(
-  (desiredLateralVelocity - steerVelocity) * gripResponse * dt,
-  -7.0 * dt,
-  7.0 * dt
-);
-steerVelocity += lateralVelocityChange;
+const speedRatio = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed), 0, 1.15);
+// Responsive arcade steering: input creates controlled lateral acceleration.
+// Handling upgrades improve response without multiplying the steering angle
+// into extreme values at every speed.
+const handlingFactor = THREE.MathUtils.clamp((spec.handling || 8) / 8.5, 0.82, 1.2);
+const lateralAcceleration = steer * (4.2 + speedRatio * 7.2) * handlingFactor;
+if (steer !== 0) {
+  steerVelocity += lateralAcceleration * dt * (drifting ? 1.18 : 1);
+} else {
+  steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, drifting ? 1.4 : 3.8, dt);
+}
+steerVelocity = THREE.MathUtils.clamp(steerVelocity, -7.4, 7.4);
+// At a standstill the car should not slide sideways from steering alone.
+if (speedMps < 2) steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, 7, dt);
 const previousLateral = playerLateral;
 playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
 collisionHeading = THREE.MathUtils.clamp(collisionHeading + collisionAngularVelocity * dt, -0.48, 0.48);
