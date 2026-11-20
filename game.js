@@ -54,7 +54,7 @@ const particles = [];
 const lanes = [-6.75, -2.25, 2.25, 6.75];
 const keys = { left: false, right: false, accelerate: false, brake: false, drift: false, nitro: false };
 const cars = [
-  { id: 'starter', name: 'LEXUS LS 500H', color: 0x1678c8, cost: 0, maxSpeed: 175, acceleration: 25, handling: 8.3, modelStyle: 0 },
+  { id: 'starter', name: 'LEXUS LS 500H', color: 0x1678c8, cost: 0, maxSpeed: 190, acceleration: 25, handling: 8.3, modelStyle: 0 },
   { id: 'rally', name: 'RALLY GT', color: 0xd54b3e, cost: 250, maxSpeed: 205, acceleration: 34, handling: 9.2, modelStyle: 1 },
   { id: 'midnight', name: 'MIDNIGHT SUV', color: 0x403f70, cost: 650, maxSpeed: 225, acceleration: 27, handling: 7.8, modelStyle: 2 },
   { id: 'sunset', name: 'SUNSET COUPE', color: 0xe9a33b, cost: 1100, maxSpeed: 195, acceleration: 39, handling: 10.2, modelStyle: 1 },
@@ -1614,6 +1614,27 @@ function spawnPoliceChaser(offset = 0) {
   placeOnRoad(car, lateral, pathZ, 0);
   policeChasers.push({ mesh: car, pathZ, lateral, speed: 10, offset, role });
 }
+function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLength) {
+  const policeWidth = policeUnit.mesh.userData.collisionHalfWidth || 1.08;
+  const policeLength = policeUnit.mesh.userData.collisionHalfLength || 2.4;
+  const dx = policeUnit.lateral - otherLane;
+  const dz = policeUnit.pathZ - otherZ;
+  const overlapX = policeWidth + otherWidth - Math.abs(dx);
+  const overlapZ = policeLength + otherLength - Math.abs(dz);
+  if (overlapX <= 0 || overlapZ <= 0) return false;
+
+  // Move the police car along the axis with the least penetration. This
+  // keeps its actual hitbox outside the other vehicle instead of allowing
+  // the meshes to pass through one another.
+  if (overlapX < overlapZ) {
+    policeUnit.lateral += (Math.sign(dx) || (policeUnit.offset >= 0 ? 1 : -1)) * (overlapX + 0.08);
+    policeUnit.lateral = THREE.MathUtils.clamp(policeUnit.lateral, -8.1, 8.1);
+  } else {
+    policeUnit.pathZ += (Math.sign(dz) || 1) * (overlapZ + 0.08);
+  }
+  return true;
+}
+
 function updatePoliceChase(dt) {
   if (!running) return;
   if (gameMode === 'escape') {
@@ -1667,6 +1688,37 @@ function updatePoliceChase(dt) {
       unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, 1.8, dt);
       unit.pathZ = THREE.MathUtils.damp(unit.pathZ, targetZ, approachRate, dt);
       unit.lateral = THREE.MathUtils.damp(unit.lateral, targetLane, 1.15, dt);
+      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
+
+      // Solid collision against the player: police cars cannot drive through
+      // the player's car. The contact nudges the cruiser away and bumps speed.
+      const playerHit = separatePoliceHitbox(
+        unit, 7, playerLateral,
+        player.userData.collisionHalfWidth || 1.05,
+        player.userData.collisionHalfLength || 2.1
+      );
+      if (playerHit) {
+        actualSpeed = Math.max(0, actualSpeed - 3.5);
+        placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
+      }
+
+      // Police cruisers also have solid hitboxes against every normal traffic
+      // vehicle and against each other.
+      for (const trafficCar of traffic) {
+        separatePoliceHitbox(
+          unit, trafficCar.pathZ, trafficCar.lateralX,
+          trafficCar.mesh.userData.collisionHalfWidth || 1.05,
+          trafficCar.mesh.userData.collisionHalfLength || 2.1
+        );
+      }
+      for (const otherPolice of policeChasers) {
+        if (otherPolice === unit) break;
+        separatePoliceHitbox(
+          unit, otherPolice.pathZ, otherPolice.lateral,
+          otherPolice.mesh.userData.collisionHalfWidth || 1.08,
+          otherPolice.mesh.userData.collisionHalfLength || 2.4
+        );
+      }
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
 
       const laneDifference = Math.abs(unit.lateral - playerLateral);
@@ -1952,10 +2004,19 @@ function updateTraffic(dt, previousPlayer) {
         if(arrests>=5){$('game-over-title').textContent='SHIFT COMPLETE!';finishGame();return;}
         continue;
       }
-      hitCooldown=0.65;
-      // Traffic bumps do not consume lives; the run continues.
+      hitCooldown = 0.8;
+      // A traffic impact pushes the cars apart and slows the player instead
+      // of deleting the traffic car, so the vehicles visibly bump.
+      const side = Math.sign(dxStart + dxEnd) || (Math.random() < 0.5 ? -1 : 1);
+      const longitudinalSide = Math.sign(newZ - 7) || 1;
+      item.pathZ = 7 + longitudinalSide * (combinedLength + 0.18);
+      item.lateralX = THREE.MathUtils.clamp(playerLateral + side * (combinedWidth + 0.12), -8.2, 8.2);
+      item.targetLane = item.lane = item.lateralX;
+      placeOnRoad(item.mesh, item.lateralX, item.pathZ,
+        item.baseHeading + (item.oncoming ? Math.PI : 0) + (item.mesh.userData.laneSteer || 0));
+      actualSpeed = Math.max(0, actualSpeed - Math.max(18, actualSpeed * 0.24));
+      steerVelocity += -side * 1.1;
       addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
-      scene.remove(item.mesh); traffic.splice(index,1);
       const warning=$('damage-warning');
       warning.classList.add('show');
       window.clearTimeout(updateTraffic.damageTimeout);
