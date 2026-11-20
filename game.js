@@ -1815,6 +1815,34 @@ function updateRepairPickups(dt) {
   }
 }
 
+function emitPoliceDamageSmoke(unit, dt) {
+  if (unit.health >= 200 || unit.disabled) return;
+  unit.smokeTimer = Math.max(0, (unit.smokeTimer || 0) - dt);
+  if (unit.smokeTimer > 0) return;
+  unit.smokeTimer = THREE.MathUtils.lerp(0.22, 0.075, 1 - unit.health / 200);
+  const damageRatio = 1 - unit.health / 200;
+  const smokeColor = damageRatio < 0.25 ? 0xd9e0e3 :
+    damageRatio < 0.5 ? 0x858b91 :
+    damageRatio < 0.75 ? 0x45484d : 0x17191d;
+  const puff = new THREE.Mesh(
+    new THREE.SphereGeometry(0.22 + Math.random() * 0.16, 7, 6),
+    new THREE.MeshBasicMaterial({ color: smokeColor, transparent: true, opacity: 0.48, depthWrite: false })
+  );
+  const exhaustPosition = unit.mesh.localToWorld(new THREE.Vector3(
+    (Math.random() - 0.5) * 0.55, 0.95 + Math.random() * 0.25, -1.85
+  ));
+  puff.position.copy(exhaustPosition);
+  scene.add(puff);
+  particles.push({
+    mesh: puff,
+    velocity: new THREE.Vector3((Math.random() - 0.5) * 1.1, 1.2 + Math.random() * 1.2, -0.8 - Math.random() * 0.7),
+    life: 1.15 + Math.random() * 0.7,
+    maxLife: 1.85,
+    smoke: true,
+    startScale: puff.scale.x
+  });
+}
+
 function updatePoliceChase(dt) {
   if (!running) return;
   if (gameMode === 'escape') {
@@ -1900,6 +1928,7 @@ function updatePoliceChase(dt) {
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
       unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
+      emitPoliceDamageSmoke(unit, dt);
 
       // Solid collision against the player: police cars cannot drive through
       // the player's car. The contact nudges the cruiser away and bumps speed.
@@ -2389,6 +2418,12 @@ const p = particles[index];
 p.life -= dt;
 p.velocity.y -= 12 * dt;
 p.mesh.position.addScaledVector(p.velocity, dt);
+if (p.smoke) {
+  const fade = THREE.MathUtils.clamp(p.life / (p.maxLife || 1.85), 0, 1);
+  p.mesh.material.opacity = 0.48 * fade;
+  const scale = (p.startScale || 0.3) * (1 + (1 - fade) * 1.8);
+  p.mesh.scale.setScalar(scale / Math.max(0.001, p.startScale || 0.3));
+}
 if (p.life <= 0) {
 scene.remove(p.mesh);
 p.mesh.geometry.dispose();
