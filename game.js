@@ -1296,6 +1296,8 @@ dailyProgress=0; save('tr-daily-progress','0'); save('tr-daily-progress-date',da
 hitCooldown=0;
 collisionRecoil=0;
 collisionYaw=0;
+collisionAngularVelocity=0;
+collisionHeading=0;
 for (const unit of policeChasers) {
   unit.lateralVelocity = 0;
   unit.longitudinalVelocity = 0;
