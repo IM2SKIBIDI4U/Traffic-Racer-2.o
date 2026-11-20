@@ -1254,14 +1254,18 @@ refreshWallet();
 function showPage(id) {
 document.querySelectorAll('.overlay').forEach((page) => {
   page.classList.add('hidden');
-  // Clear inline styles left by older result-screen handling so the hidden
-  // class always controls visibility when changing pages.
-  page.style.removeProperty('display');
+  // Force hidden overlays off even if another rule or stale inline style
+  // overrides the .hidden class.
+  page.style.setProperty('display', 'none', 'important');
   page.style.removeProperty('opacity');
   page.style.removeProperty('pointer-events');
   page.style.removeProperty('z-index');
 });
-if (id) $(id).classList.remove('hidden');
+if (id) {
+  const activePage = $(id);
+  activePage.classList.remove('hidden');
+  activePage.style.setProperty('display', 'grid', 'important');
+}
 }
 function showMenu() {
   refreshDailyDate();
