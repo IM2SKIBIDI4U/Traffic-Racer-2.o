@@ -104,6 +104,8 @@ let engineFilter;
 let nearMissChain = 0;
 let hitCooldown = 0;
 let playerHealth = 100;
+let takedownCharge = 0;
+let takedownHud = null;
 let collisionRecoil = 0;
 let collisionYaw = 0;
 let collisionAngularVelocity = 0;
@@ -1941,23 +1943,22 @@ function updatePoliceChase(dt) {
       );
       if (playerHit) {
         damagePlayer(3);
-        const ramSpeed = Math.max(0, actualSpeed - unit.speed * 0.35);
-        if (unit.ramCooldown <= 0 && ramSpeed >= 25) {
-          // A proper high-speed ram can disable a cruiser in one or two hits.
-          const ramDamage = THREE.MathUtils.clamp(22 + (ramSpeed - 25) * 1.15, 22, 100);
-          unit.health = Math.max(0, unit.health - ramDamage);
-          unit.ramCooldown = 0.55;
-          if (unit.health <= 0) {
-            unit.disabled = true;
-            scene.remove(unit.mesh);
-            awardCredits(15);
-            const toast = $('near-miss');
-            if (toast) {
-              toast.textContent = 'POLICE CAR DISABLED · +15 CREDITS';
-              toast.classList.add('show');
-              window.clearTimeout(updatePoliceChase.toastTimeout);
-              updatePoliceChase.toastTimeout = window.setTimeout(() => toast.classList.remove('show'), 1100);
-            }
+        const selectedSpec = cars.find((car) => car.id === selectedCar) || cars.at(0);
+        const requiredSpeed = selectedSpec.maxSpeed * 0.85;
+        if (unit.ramCooldown <= 0 && takedownCharge >= 100 && actualSpeed >= requiredSpeed) {
+          // Only a fully charged, near-top-speed impact can disable a police car.
+          unit.health = 0;
+          unit.disabled = true;
+          unit.ramCooldown = 1.2;
+          scene.remove(unit.mesh);
+          awardCredits(15);
+          takedownCharge = 0;
+          const toast = $('near-miss');
+          if (toast) {
+            toast.textContent = 'CHARGED TAKEDOWN · +15 CREDITS';
+            toast.classList.add('show');
+            window.clearTimeout(updatePoliceChase.toastTimeout);
+            updatePoliceChase.toastTimeout = window.setTimeout(() => toast.classList.remove('show'), 1100);
           }
         }
         const normalX = contactDx || (unit.offset >= 0 ? -1 : 1);
@@ -2441,6 +2442,20 @@ if (nitroActive) nitro = Math.max(0, nitro - dt * 34);
 else nitro = Math.min(100, nitro + dt * 8);
 const throttle = autoAccel || keys.accelerate;
 const maxSpeed = stats.maxSpeed + (nitroActive ? 45 : 0);
+if (actualSpeed >= maxSpeed * 0.82) takedownCharge = Math.min(100, takedownCharge + dt * 20);
+if (!takedownHud) {
+  takedownHud = document.createElement('div');
+  takedownHud.id = 'takedown-charge-hud';
+  Object.assign(takedownHud.style, {
+    position: 'fixed', left: '50%', bottom: '92px', transform: 'translateX(-50%)',
+    zIndex: '30', width: 'min(260px, 70vw)', padding: '9px 12px',
+    borderRadius: '8px', background: 'rgba(5, 13, 22, 0.82)',
+    color: '#fff', font: '700 12px Arial, sans-serif', letterSpacing: '1px',
+    textAlign: 'center', pointerEvents: 'none', boxSizing: 'border-box'
+  });
+  document.body.appendChild(takedownHud);
+}
+takedownHud.textContent = 'TAKEDOWN CHARGE  ' + Math.floor(takedownCharge) + '%';
 if (keys.brake) actualSpeed = Math.max(0, actualSpeed - (stats.braking + actualSpeed * 0.12) * dt);
 else if (throttle) actualSpeed = Math.min(maxSpeed, actualSpeed + stats.acceleration * (nitroActive ? 1.55 : 1) * dt);
 else actualSpeed = Math.max(0, actualSpeed - (2 + actualSpeed * 0.018) * dt);
