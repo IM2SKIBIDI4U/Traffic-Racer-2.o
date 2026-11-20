@@ -2710,7 +2710,7 @@ function updateOpenCity(dt,stats) {
     else citySpeedMps=Math.max(-8,citySpeedMps-stats.acceleration/3.6*0.55*dt);
   } else if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
   else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
-  const steer=(keys.right?1:0)-(keys.left?1:0);
+  const steer=(keys.left?1:0)-(keys.right?1:0);
   const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
   cityHeading+=steer*1.35*speedFactor*Math.sign(citySpeedMps||1)*dt;
   cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
@@ -2833,15 +2833,8 @@ function updateOpenCity(dt,stats) {
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
   camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
   camera.updateProjectionMatrix();
-  // World-space chase camera: stay behind the direction of travel, not the
-  // model's possibly different local forward axis.
-  const cameraForward=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
-  const camPos=player.position.clone().addScaledVector(cameraForward,-15.5);
-  camPos.y+=6.2;
-  const camTarget=player.position.clone().addScaledVector(cameraForward,10+fast*4);
-  camTarget.y+=1.35;
-  camera.position.lerp(camPos,1-Math.exp(-4.2*dt));
-  camera.lookAt(camTarget);
+  // Use the shared camera-mode controller in every driving mode.
+  applyCameraMode(camera,player,dt);
   cameraShake=THREE.MathUtils.damp(cameraShake,0,7,dt);
   if(cameraShake>0.01){camera.position.x+=Math.sin(performance.now()*0.03)*cameraShake*0.12;}
   updateProgression();
