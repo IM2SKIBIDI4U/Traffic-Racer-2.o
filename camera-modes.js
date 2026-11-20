@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
 const modes = [
-  // Player vehicles face local +Z, so chase view sits behind at local -Z.
+  // Local +Z is forward in city mode; highway mode uses local -Z.
   { id: 'chase', label: 'CHASE', position: new THREE.Vector3(0, 4.0, -8.2), target: new THREE.Vector3(0, 1.1, 13), fov: 66 },
   { id: 'hood', label: 'HOOD', position: new THREE.Vector3(0, 1.55, 1.25), target: new THREE.Vector3(0, 1.35, 42), fov: 73 },
   { id: 'cockpit', label: 'COCKPIT', position: new THREE.Vector3(0, 1.18, 0.35), target: new THREE.Vector3(0, 1.05, 42), fov: 76 },
@@ -28,15 +28,22 @@ function cycleMode() {
   updateButton();
 }
 
-export function applyCameraMode(camera, player, dt = 0) {
+export function applyCameraMode(camera, player, dt = 0, forwardSign = -1) {
   if (!player) return;
   const mode = modes[selected];
-  const desiredPosition = player.localToWorld(mode.position.clone());
-  const desiredTarget = player.localToWorld(mode.target.clone());
-  const blend = dt > 0 ? 1 - Math.exp(-7 * dt) : 1;
+  // The city drives toward local +Z; the original highway drives toward -Z.
+  // Mirror only the local Z offsets so every preset works in both modes.
+  const positionOffset = mode.position.clone();
+  const targetOffset = mode.target.clone();
+  positionOffset.z *= forwardSign;
+  targetOffset.z *= forwardSign;
+  const desiredPosition = player.localToWorld(positionOffset);
+  const desiredTarget = player.localToWorld(targetOffset);
+  const blend = dt > 0 ? 1 - Math.exp(-8 * dt) : 1;
   camera.position.lerp(desiredPosition, blend);
   camera.fov += (mode.fov - camera.fov) * (dt > 0 ? 1 - Math.exp(-5 * dt) : 1);
-  camera.up.set(0, mode.id === 'overhead' ? 0 : 1, mode.id === 'overhead' ? -1 : 0);
+  camera.up.set(0, 0, mode.id === 'overhead' ? -forwardSign : 0);
+  if (mode.id !== 'overhead') camera.up.set(0, 1, 0);
   camera.lookAt(desiredTarget);
   camera.updateProjectionMatrix();
 }
