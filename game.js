@@ -1369,9 +1369,8 @@ function finishGame() {
   actualSpeed = 0;
   steerVelocity = 0;
   nitroActive = false;
-  cameraShake = 0.5;
-  // update() stops once the game ends, so apply the crash jolt here.
-  camera.position.x += (Math.random() - 0.5) * cameraShake;
+  // The crash flash communicates the end impact; don't teleport the
+  // camera when the update loop has stopped.
   cameraShake = 0;
 
   try {
@@ -1788,12 +1787,17 @@ function updatePoliceChase(dt) {
       unit.impactVelZ = THREE.MathUtils.damp(unit.impactVelZ || 0, 0, 1.7, dt);
       unit.collisionHeading = THREE.MathUtils.clamp((unit.collisionHeading || 0) + (unit.angularVelocity || 0) * dt, -0.48, 0.48);
       unit.angularVelocity = THREE.MathUtils.damp(unit.angularVelocity || 0, 0, 2.0, dt);
-      // Police cars also recover their straight-ahead heading after impact.
+      // Police steering angle follows their actual lateral velocity; collision
+      // yaw remains separate so the AI can recover without snapping its body.
+      const policeHeadingTarget = THREE.MathUtils.clamp(
+        Math.atan2(unit.lateralVelocity || 0, Math.max(8, unit.speed / 3.6)), -0.24, 0.24
+      );
+      unit.steeringHeading = THREE.MathUtils.damp(unit.steeringHeading || 0, policeHeadingTarget, 3.8, dt);
       unit.collisionHeading = THREE.MathUtils.damp(unit.collisionHeading, 0, 1.25, dt);
       // Collision impulses briefly push a cruiser away before its AI regains control.
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
       unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
-      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, unit.collisionHeading || 0);
+      placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, (unit.steeringHeading || 0) + (unit.collisionHeading || 0));
 
       // Solid collision against the player: police cars cannot drive through
       // the player's car. The contact nudges the cruiser away and bumps speed.
@@ -2124,10 +2128,13 @@ function updateTraffic(dt, previousPlayer) {
       // into the move instead of snapping toward the target lane.
       item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 0.72, dt);
       item.laneVelocity = (item.lateralX - previousLateral) / Math.max(dt, 0.001);
+      const trafficHeadingTarget = THREE.MathUtils.clamp(
+        Math.atan2(-item.laneVelocity, Math.max(8, item.botSpeed / 3.6)), -0.20, 0.20
+      );
       item.mesh.userData.laneSteer = THREE.MathUtils.damp(
         item.mesh.userData.laneSteer || 0,
-        THREE.MathUtils.clamp(-item.laneVelocity * 0.006, -0.055, 0.055),
-        1.3,
+        trafficHeadingTarget,
+        2.8,
         dt
       );
       const signalDirection = item.targetLane < item.lateralX - 0.18 ? 'left' : item.targetLane > item.lateralX + 0.18 ? 'right' : null;
