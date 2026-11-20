@@ -104,6 +104,7 @@ let engineGain;
 let engineFilter;
 let nearMissChain = 0;
 let hitCooldown = 0;
+let playerHealth = 100;
 let collisionRecoil = 0;
 let collisionYaw = 0;
 let collisionAngularVelocity = 0;
@@ -1115,7 +1116,8 @@ function spawnTraffic() {
   }
   attachTrafficTurnSignals(car);
   const baseHeading = car.rotation.y;
-  placeOnRoad(car, lane, z, baseHeading + (oncoming ? Math.PI : 0));
+  const trafficDirectionOffset = oncoming ? 0 : Math.PI;
+  placeOnRoad(car, lane, z, baseHeading + trafficDirectionOffset);
   if (night) {
     const light = new THREE.PointLight(0xffe4b7, 0.45, 12, 2);
     light.position.set(0, 0.8, oncoming ? -2.8 : 2.8);
@@ -1137,6 +1139,7 @@ function spawnTraffic() {
     lateralX: lane,
     pathZ: z,
     baseHeading,
+    trafficDirectionOffset,
     targetSpeed: botSpeed,
     targetLane: lane,
     laneChangeCooldown: 2 + Math.random() * 5,
@@ -1303,10 +1306,17 @@ for (const unit of policeChasers) {
   unit.longitudinalVelocity = 0;
   unit.observedPlayerSpeed = 0;
 }
+playerHealth = 100;
 const healthValue = $('health-value');
-if (healthValue) healthValue.closest('.health-heading')?.style.setProperty('display', 'none');
+if (healthValue) {
+  healthValue.textContent = '100%';
+  healthValue.closest('.health-heading')?.style.setProperty('display', '');
+}
 const healthBar = $('health-bar');
-if (healthBar) healthBar.closest('.meter')?.style.setProperty('display', 'none');
+if (healthBar) {
+  healthBar.style.width = '100%';
+  healthBar.closest('.meter')?.style.setProperty('display', '');
+}
 actualSpeed = 0;
 steerVelocity = 0;
 nitro = 100;
@@ -1710,6 +1720,26 @@ function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLe
   return true;
 }
 
+function damagePlayer(amount = 3) {
+  if (!running || hitCooldown > 0) return;
+  playerHealth = Math.max(0, playerHealth - amount);
+  hitCooldown = 0.4;
+  const value = $('health-value');
+  const bar = $('health-bar');
+  if (value) value.textContent = `${Math.ceil(playerHealth)}%`;
+  if (bar) bar.style.width = `${playerHealth}%`;
+  const warning = $('damage-warning');
+  if (warning) {
+    warning.classList.add('show');
+    window.clearTimeout(damagePlayer.warningTimeout);
+    damagePlayer.warningTimeout = window.setTimeout(() => warning.classList.remove('show'), 700);
+  }
+  if (playerHealth <= 0) {
+    $('game-over-title').textContent = 'VEHICLE DISABLED!';
+    finishGame();
+  }
+}
+
 function updatePoliceChase(dt) {
   if (!running) return;
   if (gameMode === 'escape') {
@@ -1809,6 +1839,7 @@ function updatePoliceChase(dt) {
         player.userData.collisionHalfLength || 2.1
       );
       if (playerHit) {
+        damagePlayer(3);
         const normalX = contactDx || (unit.offset >= 0 ? -1 : 1);
         const normalZ = contactDz || 0;
         const playerBody = {
@@ -2184,7 +2215,7 @@ function updateTraffic(dt, previousPlayer) {
   }
   // Convert each bot's lane-relative position onto the same curved centerline.
   for (const item of traffic) {
-    const headingOffset = item.baseHeading + (item.oncoming ? Math.PI : 0);
+    const headingOffset = item.baseHeading + item.trafficDirectionOffset;
     placeOnRoad(item.mesh, item.lateralX, item.pathZ, headingOffset + (item.mesh.userData.laneSteer || 0) + (item.collisionHeading || 0));
   }
 
@@ -2243,7 +2274,7 @@ function updateTraffic(dt, previousPlayer) {
         continue;
       }
       item.collisionCooldown = 0.18;
-      hitCooldown = Math.min(hitCooldown, 0.12);
+      damagePlayer(3);
       // A traffic impact pushes the cars apart and slows the player instead
       // of deleting the traffic car, so the vehicles visibly bump.
       const side = Math.sign(dxStart + dxEnd) || 1;
@@ -2289,7 +2320,7 @@ function updateTraffic(dt, previousPlayer) {
       collisionYaw += THREE.MathUtils.clamp(-contact.aX * 0.025, -0.18, 0.18);
       collisionRecoil = THREE.MathUtils.clamp(collisionRecoil + contact.aX * 0.35, -5, 5);
       placeOnRoad(item.mesh, item.lateralX, item.pathZ,
-        item.baseHeading + (item.oncoming ? Math.PI : 0) + (item.mesh.userData.laneSteer || 0) + (item.collisionHeading || 0));
+        item.baseHeading + item.trafficDirectionOffset + (item.mesh.userData.laneSteer || 0) + (item.collisionHeading || 0));
       cameraShake = Math.max(cameraShake, 0.32);
       steerVelocity += -side * 1.1;
       addSparks(player.position.clone().add(new THREE.Vector3(0,0.7,-1.6)),9);
