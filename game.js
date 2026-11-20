@@ -1053,19 +1053,33 @@ function attachTrafficTurnSignals(vehicle) {
   vehicle.userData.turnSignals=signals;
 }
 function spawnTraffic() {
-  const trafficLimit = Math.min(24, 16 + Math.min(8, Math.floor(score / 500)));
+  const trafficLimit = Math.min(20, 14 + Math.floor(score / 900));
   if (traffic.length >= trafficLimit) return false;
-  // Place traffic well beyond the visible driving area so it is already on the road before the player reaches it.
-  const z = -225 - Math.random() * 30;
+
+  // Spawn into a spread of distance bands so cars are already visible well
+  // before the player reaches them, without appearing in a single distant wall.
+  const spawnBands = [-115, -145, -175, -205];
   const laneOptions = roadMode === 'one-way'
     ? [...lanes]
-    : (Math.random() < 0.38 ? lanes.slice(0, 2) : lanes.slice(2));
-  const availableLanes = laneOptions.filter((candidate) =>
-    !traffic.some((item) => item.lane === candidate && Math.abs(item.pathZ - z) < 24)
-  );
-  if (!availableLanes.length) return false;
-  const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
-  const oncoming = roadMode === 'two-way' && lane < 0;
+    : [...lanes];
+  const candidates = [];
+  for (const candidate of laneOptions) {
+    const oncomingLane = roadMode === 'two-way' && candidate < 0;
+    const sameDirection = traffic.filter((item) =>
+      item.oncoming === oncomingLane && Math.abs(item.lane - candidate) < 0.2
+    );
+    for (const band of spawnBands) {
+      const z = band - Math.random() * 18;
+      const clear = !sameDirection.some((item) => Math.abs(item.pathZ - z) < 34);
+      if (clear) candidates.push({ lane: candidate, z, oncoming: oncomingLane,
+        load: sameDirection.length + Math.random() * 0.35 });
+    }
+  }
+  if (!candidates.length) return false;
+  candidates.sort((a, b) => a.load - b.load);
+  const pool = candidates.filter((candidate) => candidate.load <= candidates[0].load + 0.6);
+  const spawn = pool[Math.floor(Math.random() * pool.length)];
+  const { lane, z, oncoming } = spawn;
   const difficulty = Math.min(8, Math.floor(score / 500));
   const paceOffset = (Math.random() - 0.5) * 24;
   const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset, 45, 90);
@@ -2086,25 +2100,17 @@ function updateTraffic(dt, previousPlayer) {
     burstCooldown = 13 + Math.random() * 14;
     spawnTimer = 0;
   }
-  // Keep a buffer of traffic far ahead. This replenishes the road before fast
-  // driving brings the player close enough to notice newly spawned vehicles.
-  const difficulty = Math.min(8, Math.floor(score / 500));
-  const trafficLimit = Math.min(24, 16 + difficulty);
-  const desiredTrafficAhead = Math.min(16, 10 + difficulty);
+  // Maintain an even stream of traffic across several distance bands.
+  const difficulty = Math.min(8, Math.floor(score / 900));
+  const trafficLimit = Math.min(20, 14 + difficulty);
+  const desiredTrafficAhead = Math.min(13, 9 + Math.floor(difficulty / 2));
   const trafficAhead = traffic.filter((item) => item.pathZ < -35).length;
   spawnTimer -= dt;
-  if (spawnTimer <= 0 && trafficAhead < desiredTrafficAhead) {
-    const dense = burstTimer > 0 || (difficulty >= 3 && Math.random() < 0.12 + difficulty * 0.025);
-    const count = dense && Math.random() < 0.3 + difficulty * 0.035 ? 2 : 1;
-    let spawned = 0;
-    for (let i = 0; i < count && traffic.length < trafficLimit; i++) {
-      if (spawnTraffic()) spawned++;
-    }
-    // Traffic gradually becomes denser as distance increases.
-    const baseInterval = Math.max(0.16, 0.34 - difficulty * 0.018);
-    spawnTimer = spawned === 0
-      ? 0.16
-      : dense ? baseInterval * 0.8 + Math.random() * 0.12 : baseInterval + Math.random() * 0.16;
+  if (spawnTimer <= 0 && trafficAhead < desiredTrafficAhead && traffic.length < trafficLimit) {
+    const spawned = spawnTraffic();
+    // Retry quickly only when every lane/band is occupied; otherwise keep a
+    // measured interval so traffic arrives in a steady, readable flow.
+    spawnTimer = spawned ? 0.42 + Math.random() * 0.28 : 0.18;
   }
 
   const oldPositions = new Map(traffic.map((item) => [item, {
@@ -2126,89 +2132,94 @@ function updateTraffic(dt, previousPlayer) {
       const pulse = 0.72 + Math.sin(performance.now() * 0.008) * 0.28;
       beacon.scale.setScalar(pulse);
     }
-    // Simple driver AI: look for a slower vehicle ahead and decide whether
-    // to slow down or safely move into a neighbouring lane to pass it.
+    // Civilian traffic uses predictive following: check the space ahead,
+    // signal before changing lanes, and smoothly return to a stable lane.
     if (!item.oncoming) {
-      item.laneChangeCooldown -= dt;
+      item.laneChangeCooldown = Math.max(0, item.laneChangeCooldown - dt);
       item.playerReactionCooldown = Math.max(0, (item.playerReactionCooldown || 0) - dt);
+
+      const laneOptions = roadMode === 'one-way' ? lanes : lanes.slice(2);
+      const findLeader = (lane, range = 75) => traffic
+        .filter((other) => other !== item && !other.oncoming &&
+          Math.abs(other.lane - lane) < 0.2 && other.pathZ < item.pathZ &&
+          item.pathZ - other.pathZ < range)
+        .sort((a, b) => b.pathZ - a.pathZ)[0] || null;
+      const leader = findLeader(item.targetLane);
+      const gap = leader ? item.pathZ - leader.pathZ : Infinity;
+      const desiredGap = 18 + item.botSpeed * 0.12;
+
+      // If a slower car is ahead, choose a lane only when the full merge area
+      // is clear both ahead and behind. Otherwise brake smoothly and wait.
+      if (leader && gap < desiredGap + 18 && item.laneChangeCooldown <= 0) {
+        const alternatives = laneOptions
+          .filter((candidate) => Math.abs(candidate - item.targetLane) > 0.1)
+          .map((candidate) => {
+            const nearby = traffic.filter((other) => other !== item && !other.oncoming &&
+              Math.abs(other.lane - candidate) < 0.2);
+            const ahead = nearby.filter((other) => other.pathZ < item.pathZ)
+              .reduce((best, other) => Math.min(best, item.pathZ - other.pathZ), Infinity);
+            const behind = nearby.filter((other) => other.pathZ > item.pathZ)
+              .reduce((best, other) => Math.min(best, other.pathZ - item.pathZ), Infinity);
+            return { lane: candidate, score: Math.min(ahead, 90) + Math.min(behind, 55) * 0.65,
+              safe: ahead > desiredGap + 12 && behind > 24 };
+          })
+          .filter((option) => option.safe)
+          .sort((a, b) => b.score - a.score);
+        if (alternatives.length && item.drivingStyle > 0.18) {
+          item.targetLane = alternatives[0].lane;
+          item.laneChangeCooldown = 4.5 + Math.random() * 3;
+          item.mesh.userData.signalUntil = performance.now() + 650;
+        }
+      }
+
+      // React to a player approaching quickly from behind, but do not make
+      // traffic instantly teleport or swerve into an occupied lane.
       const gapToPlayer = 7 - item.pathZ;
       const closingKmh = actualSpeed - item.botSpeed;
-      const playerOverlappingLane = Math.abs(item.lateralX - playerLateral) < 2.9;
-      let playerBrakeSpeed = Infinity;
-
-      // Drivers react to a fast-approaching player: change lanes when safe,
-      // otherwise brake. A portion of drivers stay aggressive to keep traffic challenging.
-      if (gapToPlayer > 7 && gapToPlayer < 48 && closingKmh > 16 &&
-          playerOverlappingLane && item.playerReactionCooldown <= 0) {
-        const playerLaneOptions = roadMode === 'one-way' ? lanes : lanes.slice(2);
-        const safeAlternatives = playerLaneOptions.filter((candidate) =>
-          Math.abs(candidate - item.lane) > 0.1 &&
-          Math.abs(candidate - playerLateral) > 3.1 &&
-          !traffic.some((other) => other !== item && other.lane === candidate &&
-            Math.abs(other.pathZ - item.pathZ) < 25)
-        );
-        if (safeAlternatives.length && item.drivingStyle > 0.2 && gapToPlayer > 13) {
-          item.targetLane = safeAlternatives.sort((a, b) =>
-            Math.abs(b - playerLateral) - Math.abs(a - playerLateral)
-          )[0];
-          item.lane = item.targetLane;
-          item.laneChangeCooldown = 3.5 + Math.random() * 3.5;
-          playerBrakeSpeed = Math.max(45, actualSpeed - 8);
-        } else {
-          playerBrakeSpeed = Math.max(35, actualSpeed - (gapToPlayer < 18 ? 38 : 24));
-        }
-        item.playerReactionCooldown = 1.1 + Math.random() * 1.4;
-      }
-      const leader = traffic
-        .filter((other) => other !== item && !other.oncoming && other.lane === item.lane && other.pathZ < item.pathZ)
-        .sort((a, b) => b.pathZ - a.pathZ)[0];
-      const gap = leader ? item.pathZ - leader.pathZ : Infinity;
-      // Continuously adapt each car to the live player/police pace. A small
-      // per-car offset keeps traffic varied without making it crawl or fly past.
-      const paceTarget = THREE.MathUtils.clamp(getTrafficPaceKmh() + (item.paceOffset || 0), 45, 90);
-      item.targetSpeed = THREE.MathUtils.damp(item.targetSpeed, paceTarget, 0.7, dt);
-      const personalityFactor = item.drivingStyle < 0.25 ? 0.96 : item.drivingStyle > 0.75 ? 1.05 : 1;
-      const desiredCruise = THREE.MathUtils.clamp(item.targetSpeed * personalityFactor, 45, 90);
-
-      if (leader && gap < 30 && item.laneChangeCooldown <= 0 && item.drivingStyle > 0.28) {
-        const laneOptions = roadMode === 'one-way'
-          ? lanes
-          : lanes.slice(2);
-        const alternatives = laneOptions.filter((candidate) => candidate !== item.lane &&
-          !traffic.some((other) => other !== item && !other.oncoming && other.lane === candidate && Math.abs(other.pathZ - item.pathZ) < 34)
-        );
-        if (alternatives.length) {
-          item.targetLane = alternatives.sort((a, b) => Math.abs(a - item.lane) - Math.abs(b - item.lane))[0];
-          item.lane = item.targetLane;
-          item.laneChangeCooldown = 5 + Math.random() * 7;
+      let playerTargetSpeed = 90;
+      if (gapToPlayer > 5 && gapToPlayer < 42 && closingKmh > 18 &&
+          Math.abs(item.lateralX - playerLateral) < 3.0) {
+        playerTargetSpeed = Math.max(48, actualSpeed - (gapToPlayer < 17 ? 34 : 18));
+        if (item.playerReactionCooldown <= 0 && item.laneChangeCooldown <= 0) {
+          const escapeLane = laneOptions
+            .filter((candidate) => Math.abs(candidate - item.targetLane) > 0.1 &&
+              Math.abs(candidate - playerLateral) > 3.1)
+            .find((candidate) => !traffic.some((other) => other !== item && !other.oncoming &&
+              Math.abs(other.lane - candidate) < 0.2 && Math.abs(other.pathZ - item.pathZ) < 32));
+          if (escapeLane !== undefined && item.drivingStyle > 0.3 && gapToPlayer > 13) {
+            item.targetLane = escapeLane;
+            item.laneChangeCooldown = 5;
+          }
+          item.playerReactionCooldown = 1.6 + Math.random() * 1.2;
         }
       }
 
-      const followingSpeed = leader && gap < 22
-        ? Math.max(35, leader.botSpeed - (22 - gap) * 2.2)
-        : desiredCruise;
-      item.botSpeed = THREE.MathUtils.clamp(THREE.MathUtils.damp(
-        item.botSpeed,
-        Math.min(desiredCruise, followingSpeed, playerBrakeSpeed),
-        playerBrakeSpeed < desiredCruise ? 2.8 : 1.8,
-        dt
-      ), 0, 90);
+      const cruise = THREE.MathUtils.clamp(68 + (item.paceOffset || 0) * 0.45, 52, 90);
+      const followTarget = leader && gap < desiredGap
+        ? Math.max(42, leader.botSpeed - (desiredGap - gap) * 1.25)
+        : cruise;
+      const targetSpeed = Math.min(cruise, followTarget, playerTargetSpeed);
+      item.botSpeed = THREE.MathUtils.clamp(
+        THREE.MathUtils.damp(item.botSpeed, targetSpeed, targetSpeed < item.botSpeed ? 2.4 : 1.15, dt),
+        0, 90
+      );
+
       const previousLateral = item.lateralX;
-      // Gentle lane changes: build lateral speed gradually and steer the body
-      // into the move instead of snapping toward the target lane.
-      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 0.72, dt);
+      item.lateralX = THREE.MathUtils.damp(item.lateralX, item.targetLane, 1.05, dt);
       item.laneVelocity = (item.lateralX - previousLateral) / Math.max(dt, 0.001);
-      const trafficHeadingTarget = THREE.MathUtils.clamp(
-        Math.atan2(-item.laneVelocity, Math.max(8, item.botSpeed / 3.6)), -0.20, 0.20
+      const steerTarget = THREE.MathUtils.clamp(
+        Math.atan2(-item.laneVelocity, Math.max(9, item.botSpeed / 3.6)), -0.16, 0.16
       );
-      item.mesh.userData.laneSteer = THREE.MathUtils.damp(
-        item.mesh.userData.laneSteer || 0,
-        trafficHeadingTarget,
-        2.8,
-        dt
-      );
-      const signalDirection = item.targetLane < item.lateralX - 0.18 ? 'left' : item.targetLane > item.lateralX + 0.18 ? 'right' : null;
+      item.mesh.userData.laneSteer = THREE.MathUtils.damp(item.mesh.userData.laneSteer || 0, steerTarget, 2.2, dt);
+      const signalDirection = item.targetLane < item.lateralX - 0.16 ? 'left' :
+        item.targetLane > item.lateralX + 0.16 ? 'right' : null;
       updateVehicleSignals(item.mesh, signalDirection, performance.now());
+    } else {
+      // Oncoming cars keep a predictable speed and never use same-direction
+      // lane-change logic.
+      item.botSpeed = THREE.MathUtils.clamp(
+        THREE.MathUtils.damp(item.botSpeed, 72 + (item.paceOffset || 0) * 0.25, 1.0, dt), 48, 88
+      );
     }
 
     const botMps = item.botSpeed / 3.6 * 2;
