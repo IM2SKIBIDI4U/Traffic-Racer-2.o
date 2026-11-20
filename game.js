@@ -2948,16 +2948,22 @@ function updateOpenCity(dt,stats) {
     let dx=targetX-mesh.position.x;
     let dz=targetZ-mesh.position.z;
     const distanceSq=dx*dx+dz*dz;
-    // Rejoin the pursuit if a cruiser gets lost across several city blocks.
-    if(distanceSq>118*118) {
+    // Hard failsafe: if a cruiser falls more than 140 m behind/away from
+    // the player, put it back on a nearby street about 10 m behind them.
+    const playerDx=player.position.x-mesh.position.x;
+    const playerDz=player.position.z-mesh.position.z;
+    if(playerDx*playerDx+playerDz*playerDz>140*140) {
       const behind=cityHeading+Math.PI;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*38,0,Math.cos(behind)*38));
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*10,0,Math.cos(behind)*10));
       cop.axis=Math.abs(Math.sin(behind))>Math.abs(Math.cos(behind))?'x':'z';
       cop.lane=(Math.random()<0.5?-1:1)*3.8;
       if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
       else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
+      cop.sign=cop.axis==='x'?(player.position.x>=mesh.position.x?1:-1):(player.position.z>=mesh.position.z?1:-1);
+      mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
       dx=targetX-mesh.position.x;dz=targetZ-mesh.position.z;
       cop.lastJunction=NaN;
+      cop.turnCooldown=0.9;
       cop.speed=Math.max(cop.speed||0,48);
     }
     const along=cop.axis==='x'?mesh.position.x:mesh.position.z;
