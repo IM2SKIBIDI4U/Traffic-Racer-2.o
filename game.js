@@ -2900,22 +2900,44 @@ function updateCityMinimap(dt) {
   ctx.fillStyle = '#a9c5d5'; ctx.fillText('CITY', 42, 15);
 }
 function attemptCityRobbery() {
-  if(!player||!running)return false;
-  const place=cityBusinessLocations.find(p=>Math.hypot(player.position.x-p.x,player.position.z-p.z)<13);
-  if(!place)return false;
-  const reward=place.name==='BANK'?500:place.name==='JEWELRY SHOP'?300:120;
+  if (!player || !running) return false;
+  const place = cityBusinessLocations.find(p => Math.hypot(player.position.x - p.x, player.position.z - p.z) < 13);
+  if (!place) return false;
+  const reward = place.name === 'BANK' ? 500 : place.name === 'JEWELRY SHOP' ? 300 : 120;
   awardCredits(reward);
-  cityWantedLevel=Math.min(5,Math.max(2,cityWantedLevel+1));
-  cityLawbreakingTime=0;
-  if(cityCrimeHud){cityCrimeHud.style.display='block';cityCrimeHud.textContent='WANTED '+'★'.repeat(cityWantedLevel);}
-  if(dragRaceHud){dragRaceHud.style.display='block';dragRaceHud.textContent=place.name+' · +
-  if (dragRaceActive || !player || Math.abs(player.position.x)>8 || Math.abs(player.position.z+520)>9 || Math.cos(cityHeading)<0.7) return;
-  dragRaceActive=true; dragRaceTime=0; dragRaceOpponentSpeed=0;
-  if(!dragRaceOpponent)dragRaceOpponent=createCar(0xe3a52f,false,1);
-  dragRaceOpponent.position.set(4.25,0,-525); dragRaceOpponent.rotation.set(0,0,0); dragRaceOpponent.visible=true;
-  if(!dragRaceOpponent.parent)scene.add(dragRaceOpponent);
-  if(!dragRaceHud) { dragRaceHud=document.createElement('div'); Object.assign(dragRaceHud.style,{position:'fixed',top:'18%',left:'50%',transform:'translateX(-50%)',zIndex:'45',padding:'12px 20px',background:'rgba(5,13,22,.9)',color:'white',font:'bold 22px Arial',borderRadius:'10px'}); document.body.appendChild(dragRaceHud); }
-  dragRaceHud.style.display='block'; dragRaceHud.textContent='DRAG RACE · GO!';
+  cityWantedLevel = Math.min(5, Math.max(2, cityWantedLevel + 1));
+  cityLawbreakingTime = 0;
+  if (cityCrimeHud) {
+    cityCrimeHud.style.display = 'block';
+    cityCrimeHud.textContent = 'WANTED ' + '★'.repeat(cityWantedLevel);
+  }
+  if (dragRaceHud) {
+    dragRaceHud.style.display = 'block';
+    dragRaceHud.textContent = place.name + ' · +$' + reward;
+  }
+  return true;
+}
+function startDragRace() {
+  if (dragRaceActive || !player || Math.abs(player.position.x) > 8 || Math.abs(player.position.z + 520) > 9 || Math.cos(cityHeading) < 0.7) return;
+  dragRaceActive = true;
+  dragRaceTime = 0;
+  dragRaceOpponentSpeed = 0;
+  if (!dragRaceOpponent) dragRaceOpponent = createCar(0xe3a52f, false, 1);
+  dragRaceOpponent.position.set(4.25, 0, -525);
+  dragRaceOpponent.rotation.set(0, 0, 0);
+  dragRaceOpponent.visible = true;
+  if (!dragRaceOpponent.parent) scene.add(dragRaceOpponent);
+  if (!dragRaceHud) {
+    dragRaceHud = document.createElement('div');
+    Object.assign(dragRaceHud.style, {
+      position: 'fixed', top: '18%', left: '50%', transform: 'translateX(-50%)',
+      zIndex: '45', padding: '12px 20px', background: 'rgba(5,13,22,.9)',
+      color: 'white', font: 'bold 22px Arial', borderRadius: '10px'
+    });
+    document.body.appendChild(dragRaceHud);
+  }
+  dragRaceHud.style.display = 'block';
+  dragRaceHud.textContent = 'DRAG RACE · GO!';
 }
 function updateDragRace(dt) {
   if(!dragRaceActive) return;
