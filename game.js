@@ -1934,6 +1934,8 @@ steerVelocity = THREE.MathUtils.damp(
 );
 const previousLateral = playerLateral;
 playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
+collisionHeading = THREE.MathUtils.clamp(collisionHeading + collisionAngularVelocity * dt, -0.48, 0.48);
+collisionAngularVelocity = THREE.MathUtils.damp(collisionAngularVelocity, 0, 1.9, dt);
 collisionRecoil = THREE.MathUtils.damp(collisionRecoil, 0, 2.8, dt);
 collisionYaw = THREE.MathUtils.damp(collisionYaw, 0, 3.2, dt);
 if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
