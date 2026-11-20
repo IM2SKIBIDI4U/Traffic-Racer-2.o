@@ -1884,20 +1884,22 @@ function updatePoliceChase(dt) {
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, unit.collisionHeading || 0);
 
       const laneDifference = Math.abs(unit.lateral - playerLateral);
-      if (role === 'front' && unit.pathZ >= -16 && unit.pathZ <= -5 && laneDifference < 3.5) frontReady = true;
-      if (role === 'rear' && unit.pathZ >= 12 && unit.pathZ <= 27 && laneDifference < 3.5) rearReady = true;
+      // Use wider contact zones so small positioning differences do not
+      // prevent a real roadblock from registering as a capture.
+      if (role === 'front' && unit.pathZ >= -22 && unit.pathZ <= -3 && laneDifference < 4.6) frontReady = true;
+      if (role === 'rear' && unit.pathZ >= 3 && unit.pathZ <= 30 && laneDifference < 4.6) rearReady = true;
       if ((role === 'left' || role === 'right') &&
-          Math.abs(unit.pathZ - 7) < 5 &&
-          laneDifference >= 2.0 && laneDifference < 4.8) sideReady = true;
+          Math.abs(unit.pathZ - 7) < 8 &&
+          laneDifference >= 1.6 && laneDifference < 6.2) sideReady = true;
     }
 
-    // Getting boxed in only counts if the player is nearly stopped.
-    // Accelerating or steering out breaks the capture attempt, allowing evasion.
+    // A roadblock is a capture when officers hold all three sides and the
+    // player has slowed enough that the gap is no longer realistically escapable.
     const boxedIn = frontReady && rearReady && sideReady;
-    if (boxedIn && actualSpeed < 38) policeCatchTime += dt;
-    else policeCatchTime = Math.max(0, policeCatchTime - dt * 2.4);
+    if (boxedIn && actualSpeed < 55) policeCatchTime += dt;
+    else policeCatchTime = Math.max(0, policeCatchTime - dt * 3.2);
 
-    if (policeCatchTime >= 1.6) {
+    if (policeCatchTime >= 1.0) {
       $('game-over-title').textContent = 'BOXED IN!';
       finishGame();
       return;
