@@ -2769,6 +2769,74 @@ function cityVehicleCollision(mesh, other, speed) {
   other.userData.cityImpact=(other.userData.cityImpact||0)+Math.min(8,speed*0.14);
   return true;
 }
+let cityMinimap = null;
+let cityMinimapTimer = 0;
+function updateCityMinimap(dt) {
+  cityMinimapTimer -= dt;
+  if (cityMinimapTimer > 0) return;
+  cityMinimapTimer = 0.09;
+  if (!cityMinimap) {
+    cityMinimap = document.createElement('canvas');
+    cityMinimap.id = 'city-minimap';
+    cityMinimap.width = 192;
+    cityMinimap.height = 192;
+    Object.assign(cityMinimap.style, {
+      position: 'fixed', top: '14px', right: '14px', width: 'min(176px, 34vw)',
+      height: 'min(176px, 34vw)', zIndex: '40', borderRadius: '12px',
+      border: '2px solid rgba(220,235,245,.72)', background: 'rgba(5,12,20,.88)',
+      boxShadow: '0 5px 22px rgba(0,0,0,.42)', pointerEvents: 'none'
+    });
+    document.body.appendChild(cityMinimap);
+  }
+  const ctx = cityMinimap.getContext('2d');
+  if (!ctx || !player) return;
+  const cx = 96, cy = 96, scale = 0.39, heading = cityHeading;
+  ctx.clearRect(0, 0, 192, 192);
+  ctx.fillStyle = 'rgba(7,17,27,.94)';
+  ctx.fillRect(0, 0, 192, 192);
+  ctx.strokeStyle = 'rgba(120,150,165,.22)';
+  ctx.lineWidth = 1;
+  for (const radius of [28, 56, 84]) {
+    ctx.beginPath(); ctx.arc(cx, cy, radius, 0, Math.PI * 2); ctx.stroke();
+  }
+  // Faint street grid, rotated so the player's direction always points up.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(-heading);
+  ctx.strokeStyle = 'rgba(160,180,190,.18)';
+  ctx.lineWidth = 5;
+  for (let n = -4; n <= 4; n++) {
+    const p = n * CITY_BLOCK * scale;
+    ctx.beginPath(); ctx.moveTo(p, -100); ctx.lineTo(p, 100); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-100, p); ctx.lineTo(100, p); ctx.stroke();
+  }
+  ctx.restore();
+  // Police markers are positioned relative to the player and map heading.
+  for (const cop of cityPolice) {
+    if (cop.disabled || !cop.mesh) continue;
+    const dx = cop.mesh.position.x - player.position.x;
+    const dz = cop.mesh.position.z - player.position.z;
+    const right = dx * Math.cos(heading) - dz * Math.sin(heading);
+    const forward = dx * Math.sin(heading) + dz * Math.cos(heading);
+    const x = cx + right * scale, y = cy - forward * scale;
+    if (x < 5 || x > 187 || y < 5 || y > 187) continue;
+    ctx.fillStyle = '#ff4b50';
+    ctx.beginPath(); ctx.arc(x, y, 5.2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.3; ctx.stroke();
+  }
+  // Player marker always stays in the middle and points toward the top.
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = '#45d9ff';
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(0, 4); ctx.lineTo(-7, 8); ctx.closePath();
+  ctx.fill(); ctx.stroke();
+  ctx.restore();
+  ctx.font = 'bold 10px Arial';
+  ctx.fillStyle = '#45d9ff'; ctx.fillText('YOU', 8, 15);
+  ctx.fillStyle = '#ff6569'; ctx.fillText('POLICE', 42, 15);
+}
 function updateOpenCity(dt,stats) {
   if(!takedownHud) {
     takedownHud=document.createElement('div');
@@ -2868,56 +2936,67 @@ function updateOpenCity(dt,stats) {
     cop.ramCooldown=Math.max(0,cop.ramCooldown-dt);
     cop.turnCooldown=Math.max(0,(cop.turnCooldown||0)-dt);
     const mesh=cop.mesh;
-    let dx=player.position.x-mesh.position.x;
-    let dz=player.position.z-mesh.position.z;
+    // Three cruisers use separate arcade interception lanes: one pressures
+    // ahead while the others try to occupy the player's left/right approaches.
+    const copRole=cityPolice.indexOf(cop)%3;
+    const forwardX=Math.sin(cityHeading), forwardZ=Math.cos(cityHeading);
+    const rightX=Math.cos(cityHeading), rightZ=-Math.sin(cityHeading);
+    const leadOffset=copRole===0?22:0;
+    const sideOffset=copRole===1?-17:copRole===2?17:0;
+    const targetX=player.position.x+forwardX*leadOffset+rightX*sideOffset;
+    const targetZ=player.position.z+forwardZ*leadOffset+rightZ*sideOffset;
+    let dx=targetX-mesh.position.x;
+    let dz=targetZ-mesh.position.z;
     const distanceSq=dx*dx+dz*dz;
-    // Keep every cruiser in the active chase area, even after long drives.
-    if(distanceSq>175*175) {
+    // Rejoin the pursuit if a cruiser gets lost across several city blocks.
+    if(distanceSq>118*118) {
       const behind=cityHeading+Math.PI;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*42,0,Math.cos(behind)*42));
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*38,0,Math.cos(behind)*38));
       cop.axis=Math.abs(Math.sin(behind))>Math.abs(Math.cos(behind))?'x':'z';
       cop.lane=(Math.random()<0.5?-1:1)*3.8;
       if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
       else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
-      dx=player.position.x-mesh.position.x;dz=player.position.z-mesh.position.z;
+      dx=targetX-mesh.position.x;dz=targetZ-mesh.position.z;
       cop.lastJunction=NaN;
-      cop.speed=Math.max(cop.speed||0,35);
+      cop.speed=Math.max(cop.speed||0,48);
     }
     const along=cop.axis==='x'?mesh.position.x:mesh.position.z;
     const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
-    const atJunction=Math.abs(along-junction)<Math.max(1.4,cop.speed*dt+0.45);
+    const atJunction=Math.abs(along-junction)<Math.max(1.8,cop.speed*dt+0.65);
     if(atJunction&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
       cop.lastJunction=junction;
-      // Turn onto the player's street when that produces the shorter grid route.
       const wantAxis=Math.abs(dx)>Math.abs(dz)?'x':'z';
       if(wantAxis!==cop.axis) {
         if(wantAxis==='x')mesh.position.z=junction+(cop.lane||3.8);
         else mesh.position.x=junction+(cop.lane||3.8);
         cop.axis=wantAxis;
       }
-      cop.turnCooldown=0.45;
+      cop.turnCooldown=0.35;
     }
-    const targetAlong=cop.axis==='x'?player.position.x:player.position.z;
+    const targetAlong=cop.axis==='x'?targetX:targetZ;
     const currentAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
     cop.sign=targetAlong>=currentAlong?1:-1;
     mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
-    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+22,38,52);
-    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,4.5,dt);
+    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+30,48,78);
+    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,5.5,dt);
     if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
     else mesh.position.z+=cop.sign*cop.speed*dt;
     const hitDx=player.position.x-mesh.position.x;
     const hitDz=player.position.z-mesh.position.z;
     const hitDistanceSq=hitDx*hitDx+hitDz*hitDz;
-    if(hitDistanceSq<6.0*6.0&&cop.ramCooldown<=0) {
-      cop.ramCooldown=1.0;
-      damagePlayer(5);
+    // Contact is deliberately arcade-like: a short pressure hit, not a
+    // realistic vehicle-impact simulation.
+    if(hitDistanceSq<6.2*6.2&&cop.ramCooldown<=0) {
+      cop.ramCooldown=1.15;
+      damagePlayer(4);
       const distance=Math.sqrt(hitDistanceSq)||1;
-      player.position.x+=(hitDx/distance)*1.5;
-      player.position.z+=(hitDz/distance)*1.5;
-      citySpeedMps*=0.78;
-      cameraShake=Math.max(cameraShake,0.38);
+      player.position.x+=(hitDx/distance)*1.15;
+      player.position.z+=(hitDz/distance)*1.15;
+      citySpeedMps*=0.84;
+      cameraShake=Math.max(cameraShake,0.34);
     }
   }
+  updateCityMinimap(dt);
   // Real building collision: test only buildings in the nearby 3x3 block
   // neighbourhood, then resolve the car against each building's footprint.
   const blockX=Math.floor(player.position.x/CITY_BLOCK);
