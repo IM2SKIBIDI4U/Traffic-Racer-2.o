@@ -1843,7 +1843,11 @@ function updatePoliceChase(dt) {
       unit.observedBrake = THREE.MathUtils.damp(
         unit.observedBrake || 0, keys.brake ? 1 : 0, 0.78, dt
       );
-      const targetLane = playerLateral + THREE.MathUtils.clamp(unit.offset * 0.22, -1.1, 1.1);
+      const flankSide = unit.role === 'left' ? -1 : 1;
+      const targetLane = THREE.MathUtils.clamp(
+        playerLateral + (unit.role === 'left' || unit.role === 'right' ? flankSide * 2.8 : THREE.MathUtils.clamp(unit.offset * 0.22, -1.1, 1.1)),
+        -7.2, 7.2
+      );
       const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * 1.15, -5.5, 5.5);
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 1.9, dt);
       unit.lateral += unit.lateralVelocity * dt;
@@ -1855,15 +1859,25 @@ function updatePoliceChase(dt) {
       // Catch the player from behind, pass into the lane ahead, then brake
       // hard. The delayed speed/brake observations make the response visibly
       // late instead of perfectly synchronized with the player's controls.
-      if (unit.maneuver !== 'brake' && unit.pathZ <= -22) {
-        unit.maneuver = 'brake';
-      } else if (unit.maneuver === 'brake' && unit.pathZ > 32) {
-        unit.maneuver = 'approach';
+      if (unit.role === 'left' || unit.role === 'right') {
+        // Flankers pull alongside and match the player's pace, leaving room
+        // for the player to steer away when they settle beside the car.
+        if (unit.maneuver !== 'flank' && unit.pathZ <= 9) unit.maneuver = 'flank';
+        else if (unit.maneuver === 'flank' && unit.pathZ > 28) unit.maneuver = 'approach';
+      } else {
+        if (unit.maneuver !== 'brake' && unit.pathZ <= -22) {
+          unit.maneuver = 'brake';
+        } else if (unit.maneuver === 'brake' && unit.pathZ > 32) {
+          unit.maneuver = 'approach';
+        }
       }
       const approachSpeed = Math.min(policeMaxSpeed, Math.max(150, unit.observedPlayerSpeed + 65));
       const brakeSpeed = Math.max(100, unit.observedPlayerSpeed - 30 - unit.observedBrake * 8);
-      const targetSpeed = Math.min(policeMaxSpeed, unit.maneuver === 'brake' ? brakeSpeed : approachSpeed);
-      unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, unit.maneuver === 'brake' ? 2.8 : 2.4, dt);
+      const flankSpeed = THREE.MathUtils.clamp(unit.observedPlayerSpeed - 2, 0, policeMaxSpeed);
+      const targetSpeed = Math.min(policeMaxSpeed,
+        unit.maneuver === 'flank' ? flankSpeed : unit.maneuver === 'brake' ? brakeSpeed : approachSpeed);
+      unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed,
+        unit.maneuver === 'approach' ? 2.4 : 3.0, dt);
       // Relative road motion: faster police move farther ahead; slower police
       // drift back toward the player. This keeps the lead car in front.
       unit.pathZ += (actualSpeed - unit.speed) / 3.6 * 2 * dt;
