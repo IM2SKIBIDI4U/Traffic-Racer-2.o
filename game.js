@@ -115,6 +115,7 @@ let gameMode = 'escape'; // This build has one mode: escape the police.
 let policeChasers = [];
 let repairPickups = [];
 let cityRoot = null;
+let cityBuildingGrid = new Map();
 let cityTraffic = [];
 let cityPolice = [];
 let cityRepairPickups = [];
@@ -2567,6 +2568,7 @@ function createOpenCityWorld() {
   cityWorldReady = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
   cityRoot = new THREE.Group();
+  cityBuildingGrid = new Map();
   cityRoot.name = 'open_city_world';
   scene.add(cityRoot);
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(1700, 1700), material(0x53664e, 1));
@@ -2617,7 +2619,7 @@ function createOpenCityWorld() {
       const walkH=new THREE.Mesh(new THREE.BoxGeometry(1600,0.22,3.0),sidewalkCity);
       walkH.position.set(0,-0.01,i*CITY_BLOCK+side*14.0);cityRoot.add(walkH);
     }
-    if(i%2===0) for(let j=-7;j<=7;j++) for(const side of [-1,1]) {
+    if(i%4===0) for(let j=-7;j<=7;j+=2) for(const side of [-1,1]) {
       const pole=new THREE.Group();
       const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.16,7,7),poleMat);
       stem.position.y=3.5;pole.add(stem);
@@ -2635,7 +2637,7 @@ function createOpenCityWorld() {
   for(let gx=-7;gx<7;gx++) for(let gz=-7;gz<7;gz++) {
     const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
     const downtown=Math.max(0,1-Math.hypot(cx,cz)/520);
-    const count=5+Math.floor(Math.random()*4);
+    const count=2+Math.floor(Math.random()*3);
     for(let n=0;n<count;n++) {
       const w=7+Math.random()*9, d=7+Math.random()*9;
       const towerChance=Math.random();
@@ -2643,26 +2645,27 @@ function createOpenCityWorld() {
       const b=new THREE.Group();
       const facade=facadeMats[Math.floor(Math.random()*facadeMats.length)];
       const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facade);
-      shell.position.y=h/2;shell.castShadow=true;shell.receiveShadow=true;b.add(shell);
+      shell.position.y=h/2;
+      // Avoid thousands of shadow-casting objects; the city remains lit by
+      // the scene's ambient lighting and keeps rendering much lighter.
+      shell.castShadow=false;shell.receiveShadow=false;b.add(shell);
       const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.84,h*0.72,0.09),glassCity);
       windows.position.set(0,h*0.55,d/2+0.06);b.add(windows);
-      const roof=new THREE.Mesh(new THREE.BoxGeometry(w*0.72,0.45,d*0.72),poleMat);
-      roof.position.y=h+0.22;b.add(roof);
-      // Ground-floor storefront band makes street level less repetitive.
-      const shop=new THREE.Mesh(new THREE.BoxGeometry(w*0.9,2.8,0.12),material(0x263c46,0.35,0.2));
-      shop.position.set(0,1.7,d/2+0.11);b.add(shop);
       b.position.set(cx+(Math.random()-0.5)*31,0,cz+(Math.random()-0.5)*31);
       cityRoot.add(b);
+      const key=gx+','+gz;
+      if(!cityBuildingGrid.has(key))cityBuildingGrid.set(key,[]);
+      cityBuildingGrid.get(key).push({x:b.position.x,z:b.position.z,halfW:w*0.5,halfD:d*0.5});
     }
     const plaza=new THREE.Mesh(new THREE.BoxGeometry(15,0.16,15),material(0x55734d,1));
     plaza.position.set(cx,0.01,cz);cityRoot.add(plaza);
-    for(const side of [-1,1]) {
+    {
       const tree=new THREE.Group();
-      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,2.1,7),material(0x59402d,1));
+      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,2.1,6),poleMat);
       trunk.position.y=1.05;tree.add(trunk);
-      const crown=new THREE.Mesh(new THREE.SphereGeometry(1.65,8,7),material(0x426b48,1));
+      const crown=new THREE.Mesh(new THREE.SphereGeometry(1.65,7,6),facadeMats[4]);
       crown.position.y=2.7;tree.add(crown);
-      tree.position.set(cx+side*5,0,cz+(side===-1?-5:5));cityRoot.add(tree);
+      tree.position.set(cx+5,0,cz+5);cityRoot.add(tree);
     }
   }
   // Mark the outer edge with simple barriers so the city feels bounded.
@@ -2897,14 +2900,32 @@ function updateOpenCity(dt,stats) {
       cameraShake=Math.max(cameraShake,0.38);
     }
   }
-  // Buildings and block interiors are solid boundaries: stay on the streets.
-  const nearestX=Math.round(player.position.x/CITY_BLOCK)*CITY_BLOCK;
-  const nearestZ=Math.round(player.position.z/CITY_BLOCK)*CITY_BLOCK;
-  const dx=Math.abs(player.position.x-nearestX),dz=Math.abs(player.position.z-nearestZ);
-  if(dx>29&&dz>29) {
-    const oldX=oldPosition.x,oldZ=oldPosition.z;
-    if(dx>dz)player.position.x=oldX;else player.position.z=oldZ;
-    citySpeedMps*=0.72;
+  // Real building collision: test only buildings in the nearby 3x3 block
+  // neighbourhood, then resolve the car against each building's footprint.
+  const blockX=Math.floor(player.position.x/CITY_BLOCK);
+  const blockZ=Math.floor(player.position.z/CITY_BLOCK);
+  const carRadius=1.35;
+  let buildingHit=false;
+  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++) {
+    const nearby=cityBuildingGrid.get((blockX+ox)+','+(blockZ+oz));
+    if(!nearby)continue;
+    for(const building of nearby) {
+      const dx=player.position.x-building.x;
+      const dz=player.position.z-building.z;
+      const px=building.halfW+carRadius-Math.abs(dx);
+      const pz=building.halfD+carRadius-Math.abs(dz);
+      if(px<=0||pz<=0)continue;
+      buildingHit=true;
+      if(px<pz)player.position.x=building.x+Math.sign(dx||oldPosition.x-building.x)* (building.halfW+carRadius);
+      else player.position.z=building.z+Math.sign(dz||oldPosition.z-building.z)* (building.halfD+carRadius);
+    }
+  }
+  if(buildingHit) {
+    const impactSpeed=Math.abs(citySpeedMps);
+    citySpeedMps*=impactSpeed>18? -0.18:0.22;
+    cityHeading+=((player.position.x-oldPosition.x)-(player.position.z-oldPosition.z))*0.025;
+    cameraShake=Math.max(cameraShake,Math.min(0.9,0.25+impactSpeed*0.025));
+    if(hitCooldown<=0)damagePlayer(impactSpeed>18?8:3);
   }
   if(hitCooldown>0)hitCooldown-=dt;
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
