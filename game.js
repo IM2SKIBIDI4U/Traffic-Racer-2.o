@@ -2631,9 +2631,11 @@ function createOpenCityWorld() {
       cityRoot.add(pole);
     }
   }
-  // Buildings occupy the middle of each block. A taller downtown core,
-  // mixed mid-rise buildings, shopfronts and planted courtyards create an
-  // original open-world city skyline rather than repeated identical boxes.
+  // Instanced facade windows add believable building detail with very few draw calls.
+  const cityWindowGeometry=new THREE.BoxGeometry(1.05,1.45,0.10);
+  const cityWindowInstances=[];
+  const cityWindowDummy=new THREE.Object3D();
+  // Buildings occupy the middle of each block with a varied downtown skyline.
   for(let gx=-7;gx<7;gx++) for(let gz=-7;gz<7;gz++) {
     const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
     const downtown=Math.max(0,1-Math.hypot(cx,cz)/520);
@@ -2649,10 +2651,21 @@ function createOpenCityWorld() {
       // Avoid thousands of shadow-casting objects; the city remains lit by
       // the scene's ambient lighting and keeps rendering much lighter.
       shell.castShadow=false;shell.receiveShadow=false;b.add(shell);
-      const windows=new THREE.Mesh(new THREE.BoxGeometry(w*0.84,h*0.72,0.09),glassCity);
-      windows.position.set(0,h*0.55,d/2+0.06);b.add(windows);
       b.position.set(cx+(Math.random()-0.5)*31,0,cz+(Math.random()-0.5)*31);
       cityRoot.add(b);
+      // Repeated floor-by-floor windows, slightly inset into the facade.
+      const columns=Math.max(2,Math.floor(w/2.1));
+      const floors=Math.max(2,Math.min(22,Math.floor(h/4.2)));
+      for(let floor=0;floor<floors;floor++) for(let col=0;col<columns;col++) {
+        cityWindowDummy.position.set(
+          b.position.x-w*0.5+(col+0.5)*(w/columns),
+          2.2+floor*4.0,
+          b.position.z+d*0.5+0.055
+        );
+        cityWindowDummy.scale.set(0.78,1,1);
+        cityWindowDummy.updateMatrix();
+        cityWindowInstances.push(cityWindowDummy.matrix.clone());
+      }
       const key=gx+','+gz;
       if(!cityBuildingGrid.has(key))cityBuildingGrid.set(key,[]);
       cityBuildingGrid.get(key).push({x:b.position.x,z:b.position.z,halfW:w*0.5,halfD:d*0.5});
@@ -2667,6 +2680,13 @@ function createOpenCityWorld() {
       crown.position.y=2.7;tree.add(crown);
       tree.position.set(cx+5,0,cz+5);cityRoot.add(tree);
     }
+  }
+  if(cityWindowInstances.length) {
+    const windows=new THREE.InstancedMesh(cityWindowGeometry,glassCity,cityWindowInstances.length);
+    for(let i=0;i<cityWindowInstances.length;i++)windows.setMatrixAt(i,cityWindowInstances[i]);
+    windows.instanceMatrix.needsUpdate=true;
+    windows.castShadow=false;windows.receiveShadow=false;
+    cityRoot.add(windows);
   }
   // Mark the outer edge with simple barriers so the city feels bounded.
   const wallMat=material(0x46525a,0.9);
@@ -2838,8 +2858,8 @@ function updateOpenCity(dt,stats) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
     }
   }
-  // Lightweight grid pursuit. Police use simple axis-aligned navigation,
-  // avoid expensive police-vs-traffic collision checks, and focus on the player.
+  // Grid-aware pursuit: cops choose the street axis that closes the
+  // largest part of the route, then make the required turn at intersections.
   let activePolice=0;
   for(const cop of cityPolice)if(!cop.disabled)activePolice++;
   while(activePolice<3){spawnCityPolice();activePolice++;}
@@ -2850,52 +2870,50 @@ function updateOpenCity(dt,stats) {
     const mesh=cop.mesh;
     let dx=player.position.x-mesh.position.x;
     let dz=player.position.z-mesh.position.z;
-    let along=cop.axis==='x'?mesh.position.x:mesh.position.z;
-    const crossDistance=cop.axis==='x'?Math.abs(dz):Math.abs(dx);
-    const alongDistance=cop.axis==='x'?Math.abs(dx):Math.abs(dz);
+    const distanceSq=dx*dx+dz*dz;
+    // Keep every cruiser in the active chase area, even after long drives.
+    if(distanceSq>175*175) {
+      const behind=cityHeading+Math.PI;
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(behind)*42,0,Math.cos(behind)*42));
+      cop.axis=Math.abs(Math.sin(behind))>Math.abs(Math.cos(behind))?'x':'z';
+      cop.lane=(Math.random()<0.5?-1:1)*3.8;
+      if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
+      else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
+      dx=player.position.x-mesh.position.x;dz=player.position.z-mesh.position.z;
+      cop.lastJunction=NaN;
+      cop.speed=Math.max(cop.speed||0,35);
+    }
+    const along=cop.axis==='x'?mesh.position.x:mesh.position.z;
     const junction=Math.round(along/CITY_BLOCK)*CITY_BLOCK;
-    const atJunction=Math.abs(along-junction)<Math.max(1.2,cop.speed*dt+0.35);
+    const atJunction=Math.abs(along-junction)<Math.max(1.4,cop.speed*dt+0.45);
     if(atJunction&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
       cop.lastJunction=junction;
-      if(crossDistance>alongDistance+9) {
-        cop.axis=cop.axis==='x'?'z':'x';
-        if(cop.axis==='z')mesh.position.x=junction+(cop.lane||3.8);
-        else mesh.position.z=junction+(cop.lane||3.8);
+      // Turn onto the player's street when that produces the shorter grid route.
+      const wantAxis=Math.abs(dx)>Math.abs(dz)?'x':'z';
+      if(wantAxis!==cop.axis) {
+        if(wantAxis==='x')mesh.position.z=junction+(cop.lane||3.8);
+        else mesh.position.x=junction+(cop.lane||3.8);
+        cop.axis=wantAxis;
       }
-      cop.turnCooldown=0.65;
+      cop.turnCooldown=0.45;
     }
-    // Always head toward the player along the current street.
     const targetAlong=cop.axis==='x'?player.position.x:player.position.z;
     const currentAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
     cop.sign=targetAlong>=currentAlong?1:-1;
     mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
-    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+19,34,46);
-    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,5.5,dt);
+    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+22,38,52);
+    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,4.5,dt);
     if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
     else mesh.position.z+=cop.sign*cop.speed*dt;
-    dx=player.position.x-mesh.position.x;
-    dz=player.position.z-mesh.position.z;
-    const distanceSq=dx*dx+dz*dz;
-    // Recycle distant cruisers instead of letting them get lost across the map.
-    if(distanceSq>230*230) {
-      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.22;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*30,0,Math.cos(angle)*30));
-      cop.axis=Math.abs(Math.sin(angle))>Math.abs(Math.cos(angle))?'x':'z';
-      cop.lane=(Math.random()<0.5?-1:1)*3.8;
-      if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
-      else mesh.position.set(Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK+cop.lane,0,spawn.z);
-      const target=cop.axis==='x'?player.position.x:player.position.z;
-      const here=cop.axis==='x'?mesh.position.x:mesh.position.z;
-      cop.sign=target>=here?1:-1;
-      cop.lastJunction=NaN;
-      cop.speed=36;
-    }
-    if(distanceSq<6.0*6.0&&cop.ramCooldown<=0) {
+    const hitDx=player.position.x-mesh.position.x;
+    const hitDz=player.position.z-mesh.position.z;
+    const hitDistanceSq=hitDx*hitDx+hitDz*hitDz;
+    if(hitDistanceSq<6.0*6.0&&cop.ramCooldown<=0) {
       cop.ramCooldown=1.0;
       damagePlayer(5);
-      const distance=Math.sqrt(distanceSq)||1;
-      player.position.x+=(dx/distance)*1.5;
-      player.position.z+=(dz/distance)*1.5;
+      const distance=Math.sqrt(hitDistanceSq)||1;
+      player.position.x+=(hitDx/distance)*1.5;
+      player.position.z+=(hitDz/distance)*1.5;
       citySpeedMps*=0.78;
       cameraShake=Math.max(cameraShake,0.38);
     }
