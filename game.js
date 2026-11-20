@@ -1716,6 +1716,9 @@ function updatePoliceChase(dt) {
         unit.longitudinalVelocity || 0, desiredLongitudinalVelocity, 2.4, dt
       );
       unit.pathZ += unit.longitudinalVelocity * dt;
+      // Collision impulses briefly push a cruiser away before its AI regains control.
+      unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
+      unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
 
       // Solid collision against the player: police cars cannot drive through
@@ -1726,16 +1729,19 @@ function updatePoliceChase(dt) {
         player.userData.collisionHalfLength || 2.1
       );
       if (playerHit) {
-        // A police cruiser has substantial mass: hitting it costs player speed
-        // and deflects the player's car instead of letting the player bulldoze it.
-        const impactSide = Math.sign(playerLateral - unit.lateral) || (unit.offset >= 0 ? 1 : -1);
+        // Transfer more of the impact into the police car's motion, rather
+        // than removing a large amount of the player's speed.
         const relativeSpeed = Math.max(0, actualSpeed - (unit.speed || 0));
-        actualSpeed = Math.max(0, actualSpeed - Math.min(34, 9 + relativeSpeed * 0.22));
-        collisionRecoil += impactSide * Math.min(8.5, 2.8 + relativeSpeed * 0.055);
-        collisionYaw -= impactSide * 0.16;
+        const impactStrength = THREE.MathUtils.clamp(relativeSpeed / 45, 0.8, 3.2);
+        const impactSide = Math.sign(unit.lateral - playerLateral) || (unit.offset >= 0 ? 1 : -1);
+        const impactFrontBack = Math.sign(unit.pathZ - 7) || 1;
+        unit.lateralVelocity = (unit.lateralVelocity || 0) + impactSide * impactStrength * 2.8;
+        unit.longitudinalVelocity = (unit.longitudinalVelocity || 0) + impactFrontBack * impactStrength * 1.8;
+        actualSpeed = Math.max(0, actualSpeed - Math.min(10, 2.5 + relativeSpeed * 0.045));
+        collisionRecoil -= impactSide * Math.min(7, 2 + relativeSpeed * 0.035);
+        collisionYaw += impactSide * 0.13;
         cameraShake = Math.max(cameraShake, 0.28);
-        // Prevent repeated frame-by-frame impacts from adding unlimited force.
-        unit.speed = Math.max(0, (unit.speed || 0) - relativeSpeed * 0.08);
+        unit.speed = Math.max(0, (unit.speed || 0) - relativeSpeed * 0.025);
         placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, 0);
       }
 
@@ -1965,6 +1971,10 @@ function updateTraffic(dt, previousPlayer) {
 
     const botMps = item.botSpeed / 3.6 * 2;
     item.pathZ += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
+    item.pathZ += (item.collisionRecoilZ || 0) * dt;
+    item.collisionRecoilZ = THREE.MathUtils.damp(item.collisionRecoilZ || 0, 0, 1.6, dt);
+    item.lateralX += (item.collisionRecoilX || 0) * dt;
+    item.collisionRecoilX = THREE.MathUtils.damp(item.collisionRecoilX || 0, 0, 1.8, dt);
     for (const wheel of (item.mesh.userData.wheels || [])) {
       wheel.rotation.x += item.botSpeed / 3.6 * dt;
     }
@@ -2049,13 +2059,17 @@ function updateTraffic(dt, previousPlayer) {
       // of deleting the traffic car, so the vehicles visibly bump.
       const side = Math.sign(dxStart + dxEnd) || (Math.random() < 0.5 ? -1 : 1);
       const longitudinalSide = Math.sign(newZ - 7) || 1;
-      item.pathZ = 7 + longitudinalSide * (combinedLength + 0.18);
+      const impactStrength = THREE.MathUtils.clamp(actualSpeed / 55, 0.7, 3.5);
+      item.pathZ = 7 + longitudinalSide * (combinedLength + 0.16);
+      item.collisionRecoilZ = longitudinalSide * impactStrength * 3.8;
       item.lateralX = THREE.MathUtils.clamp(playerLateral + side * (combinedWidth + 0.12), -8.2, 8.2);
+      item.collisionRecoilX = side * impactStrength * 2.2;
       item.targetLane = item.lane = item.lateralX;
       placeOnRoad(item.mesh, item.lateralX, item.pathZ,
         item.baseHeading + (item.oncoming ? Math.PI : 0) + (item.mesh.userData.laneSteer || 0));
-      actualSpeed = Math.max(0, actualSpeed - Math.max(28, actualSpeed * 0.38));
-      collisionRecoil += -side * 7.5;
+      // The player and bot both recoil; the player keeps most of their speed.
+      actualSpeed = Math.max(0, actualSpeed - Math.min(11, 3 + actualSpeed * 0.045));
+      collisionRecoil += -side * Math.min(8, 3.5 + actualSpeed * 0.025);
       collisionYaw += side * 0.22;
       cameraShake = Math.max(cameraShake, 0.32);
       steerVelocity += -side * 1.1;
