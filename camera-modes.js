@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 
 const modes = [
-  { id: 'chase', label: 'CHASE', position: new THREE.Vector3(0, 4.4, 10.5), target: new THREE.Vector3(0, 1.1, -14), fov: 66 },
-  { id: 'hood', label: 'HOOD', position: new THREE.Vector3(0, 1.55, 1.25), target: new THREE.Vector3(0, 1.35, -42), fov: 73 },
-  { id: 'cockpit', label: 'COCKPIT', position: new THREE.Vector3(0, 1.18, -0.25), target: new THREE.Vector3(0, 1.05, -42), fov: 76 },
-  { id: 'overhead', label: 'OVERHEAD', position: new THREE.Vector3(0, 14, 7), target: new THREE.Vector3(0, 0, -9), fov: 62 },
+  // Player vehicles face local +Z, so chase view sits behind at local -Z.
+  { id: 'chase', label: 'CHASE', position: new THREE.Vector3(0, 4.0, -8.2), target: new THREE.Vector3(0, 1.1, 13), fov: 66 },
+  { id: 'hood', label: 'HOOD', position: new THREE.Vector3(0, 1.55, 1.25), target: new THREE.Vector3(0, 1.35, 42), fov: 73 },
+  { id: 'cockpit', label: 'COCKPIT', position: new THREE.Vector3(0, 1.18, 0.35), target: new THREE.Vector3(0, 1.05, 42), fov: 76 },
+  { id: 'overhead', label: 'OVERHEAD', position: new THREE.Vector3(0, 11, -5), target: new THREE.Vector3(0, 0, 8), fov: 62 },
 ];
 let selected = 0;
 try {
