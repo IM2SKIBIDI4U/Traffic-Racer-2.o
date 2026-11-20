@@ -2972,25 +2972,21 @@ function updateOpenCity(dt,stats) {
     const atJunction=Math.abs(along-junction)<Math.max(1.8,cop.speed*dt+0.65);
     if(atJunction&&cop.lastJunction!==junction&&cop.turnCooldown<=0) {
       cop.lastJunction=junction;
-      // Only change streets when the other axis is clearly more useful.
-      // This prevents tiny target shifts from making the cruiser alternate
-      // between horizontal and vertical movement at an intersection.
+      // Re-plan only at intersections. Never flip the driving direction in
+      // the middle of a street when the moving interception target passes by.
       const axisGapX=Math.abs(dx), axisGapZ=Math.abs(dz);
-      const wantAxis=axisGapX>axisGapZ+12?'x':axisGapZ>axisGapX+12?'z':cop.axis;
+      const wantAxis=axisGapX>axisGapZ+8?'x':axisGapZ>axisGapX+8?'z':cop.axis;
       if(wantAxis!==cop.axis) {
         if(wantAxis==='x')mesh.position.z=junction+(cop.lane||3.8);
         else mesh.position.x=junction+(cop.lane||3.8);
         cop.axis=wantAxis;
       }
+      const intersectionTarget=cop.axis==='x'?targetX:targetZ;
+      const intersectionPosition=cop.axis==='x'?mesh.position.x:mesh.position.z;
+      const intersectionError=intersectionTarget-intersectionPosition;
+      if(Math.abs(intersectionError)>5)cop.sign=intersectionError>0?1:-1;
       cop.turnCooldown=0.9;
     }
-    const targetAlong=cop.axis==='x'?targetX:targetZ;
-    const currentAlong=cop.axis==='x'?mesh.position.x:mesh.position.z;
-    const alongError=targetAlong-currentAlong;
-    // Keep the previous direction inside a small dead zone around the
-    // interception point, rather than reversing every time it is crossed.
-    if(Math.abs(alongError)>9)cop.sign=alongError>0?1:-1;
-    else if(!cop.sign)cop.sign=alongError>=0?1:-1;
     mesh.rotation.y=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
     const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+30,48,78);
     cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,5.5,dt);
