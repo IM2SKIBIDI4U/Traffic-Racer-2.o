@@ -1475,9 +1475,14 @@ burstCooldown = 8 + Math.random() * 7;
 cameraShake = 0;
 nearMissChain = 0;
 playerLateral = lanes.at(2);
-placeOnRoad(player, playerLateral, 7);
-player.rotation.set(0, roadHeading(7), 0);
-if (!cityWorldReady) updateCamera(0, 0);
+if (cityWorldReady) {
+  player.position.set(0, 0, 0);
+  player.rotation.set(0, 0, 0);
+} else {
+  placeOnRoad(player, playerLateral, 7);
+  player.rotation.set(0, roadHeading(7), 0);
+  updateCamera(0, 0);
+}
 clearTraffic();
 // Keep one consistent vehicle fleet for the whole run if the GLB finishes loading mid-race.
 activeTrafficVehicles = trafficVehicles.length ? trafficVehicles.slice() : null;
