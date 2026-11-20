@@ -134,6 +134,10 @@ let dragRaceOpponentSpeed = 0;
 let cityWantedLevel = 0;
 let cityLawbreakingTime = 0;
 let cityPoliceSpawnTimer = 0;
+let cityOnFoot = false;
+let cityAvatar = null;
+let cityParkedCar = null;
+let cityFootHeading = 0;
 let cityCrimeHud = null;
 const cityRaceMarkers = [{x:0,z:-520,label:'DRAG START'},{x:0,z:-220,label:'DRAG FINISH'}];
 const cityBusinessLocations = [{x:180,z:180,name:'CORNER STORE'},{x:-270,z:90,name:'JEWELRY SHOP'},{x:360,z:-270,name:'BANK'}];
@@ -1475,6 +1479,7 @@ cityHeading = 0;
 cityDistance = 0;
 cityRepairTimer = 3;
 dragRaceActive=false;
+cityOnFoot=false;if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}if(player)player.visible=true;
 cityWantedLevel=0; cityLawbreakingTime=0; cityPoliceSpawnTimer=0;
 if(cityCrimeHud)cityCrimeHud.style.display='none';
 if(dragRaceOpponent)dragRaceOpponent.visible=false;
@@ -2928,6 +2933,7 @@ function updateDragRace(dt) {
   } else dragRaceHud.textContent='DRAG RACE · '+dragRaceTime.toFixed(2)+'s';
 }
 function updateOpenCity(dt,stats) {
+  if(cityOnFoot){updateCityOnFoot(dt);return;}
   if(!takedownHud) {
     takedownHud=document.createElement('div');
     takedownHud.id='takedown-charge-hud';
@@ -3214,7 +3220,8 @@ if (key === 'arrowup' || key === 'w') setControl('accelerate', true);
 if (key === 'arrowdown' || key === 's') setControl('brake', true);
 if (key === ' ') setControl('drift', true);
 if (key === 'shift') setControl('nitro', true);
-if (key === 'e' && running && cityWorldReady) { if(!attemptCityRobbery()) startDragRace(); }
+if (key === 'f' && running && cityWorldReady) { if(cityOnFoot){cityOnFoot=false;if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}if(player)player.visible=true;}else exitCityVehicle(); }
+if (key === 'e' && running && cityWorldReady) { if(cityOnFoot){if(!tryEnterNearbyCityCar()&&cityCrimeHud)cityCrimeHud.textContent='GET CLOSER TO A TRAFFIC CAR';}else if(!attemptCityRobbery()) startDragRace(); }
 }, { passive: false });
 window.addEventListener('keyup', (event) => {
 const key = event.key.toLowerCase();
@@ -3306,6 +3313,80 @@ window.addEventListener('orientationchange', () => setTimeout(resize, 120));
 animate();
 +reward+' · POLICE ALERT';}
   return true;
+}
+function createCityAvatar() {
+  const avatar=new THREE.Group();
+  const shirt=new THREE.MeshStandardMaterial({color:0x2877b9,roughness:0.9});
+  const pants=new THREE.MeshStandardMaterial({color:0x252b35,roughness:1});
+  const skin=new THREE.MeshStandardMaterial({color:0xc58d68,roughness:0.9});
+  const torso=new THREE.Mesh(new THREE.CapsuleGeometry(0.34,0.62,4,8),shirt);
+  torso.position.y=1.18;avatar.add(torso);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(0.23,12,10),skin);
+  head.position.y=1.83;avatar.add(head);
+  const legs=new THREE.Mesh(new THREE.BoxGeometry(0.48,0.72,0.28),pants);
+  legs.position.y=0.48;avatar.add(legs);
+  avatar.traverse(o=>{if(o.isMesh){o.castShadow=true;o.receiveShadow=true;}});
+  scene.add(avatar);return avatar;
+}
+function exitCityVehicle() {
+  if(cityOnFoot||!player)return;
+  cityOnFoot=true;cityFootHeading=cityHeading;citySpeedMps=0;actualSpeed=0;
+  cityParkedCar=createCar(cars.find(c=>c.id===selectedCar)?.color||0x2877b9,true,cars.find(c=>c.id===selectedCar)?.modelStyle||0);
+  cityParkedCar.position.copy(player.position);cityParkedCar.rotation.copy(player.rotation);scene.add(cityParkedCar);
+  player.visible=false;
+  cityAvatar=createCityAvatar();cityAvatar.position.copy(player.position);cityAvatar.rotation.y=cityFootHeading;
+  if(cityCrimeHud){cityCrimeHud.style.display='block';cityCrimeHud.textContent='ON FOOT · WASD TO WALK · E TO ENTER';}
+}
+function enterCityVehicle(target) {
+  if(!cityOnFoot||!target)return false;
+  if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}
+  if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}
+  if(player)player.visible=false;
+  player=target;player.visible=true;player.position.y=0;
+  cityHeading=player.rotation.y;citySpeedMps=0;cityOnFoot=false;
+  player.userData.body=player.userData.body||null;
+  return true;
+}
+function tryEnterNearbyCityCar() {
+  if(!cityOnFoot||!cityAvatar)return false;
+  let nearest=null,nearestDistance=7;
+  for(const bot of cityTraffic) {
+    const d=cityAvatar.position.distanceTo(bot.mesh.position);
+    if(d<nearestDistance){nearest=bot;nearestDistance=d;}
+  }
+  if(!nearest)return false;
+  const mesh=nearest.mesh;
+  cityTraffic=cityTraffic.filter(bot=>bot!==nearest);
+  return enterCityVehicle(mesh);
+}
+function updateCityOnFoot(dt) {
+  if(!cityAvatar)return;
+  const turn=(keys.left?1:0)-(keys.right?1:0);
+  cityFootHeading+=turn*2.2*dt;
+  const forward=(keys.accelerate?1:0)-(keys.brake?1:0);
+  const direction=new THREE.Vector3(Math.sin(cityFootHeading),0,Math.cos(cityFootHeading));
+  cityAvatar.position.addScaledVector(direction,forward*7*dt);
+  cityAvatar.position.x=THREE.MathUtils.clamp(cityAvatar.position.x,-CITY_HALF+5,CITY_HALF-5);
+  cityAvatar.position.z=THREE.MathUtils.clamp(cityAvatar.position.z,-CITY_HALF+5,CITY_HALF-5);
+  cityAvatar.rotation.y=cityFootHeading;
+  player.position.copy(cityAvatar.position);
+  for(const bot of cityTraffic) {
+    const dir=bot.axis==='x'?new THREE.Vector3(bot.sign,0,0):new THREE.Vector3(0,0,bot.sign);
+    bot.mesh.position.addScaledVector(dir,bot.speed*dt);
+    bot.mesh.rotation.y=bot.axis==='x'?(bot.sign>0?Math.PI/2:-Math.PI/2):(bot.sign>0?0:Math.PI);
+  }
+  for(const cop of cityPolice) if(!cop.disabled) {
+    const dx=cityAvatar.position.x-cop.mesh.position.x,dz=cityAvatar.position.z-cop.mesh.position.z;
+    const angle=Math.atan2(dx,dz),delta=Math.atan2(Math.sin(angle-cop.mesh.rotation.y),Math.cos(angle-cop.mesh.rotation.y));
+    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
+    cop.mesh.position.x+=Math.sin(cop.mesh.rotation.y)*Math.min(43,29+cityWantedLevel*2)*dt;
+    cop.mesh.position.z+=Math.cos(cop.mesh.rotation.y)*Math.min(43,29+cityWantedLevel*2)*dt;
+  }
+  camera.position.set(cityAvatar.position.x-Math.sin(cityFootHeading)*5,cityAvatar.position.y+3.4,cityAvatar.position.z-Math.cos(cityFootHeading)*5);
+  camera.lookAt(cityAvatar.position.x,cityAvatar.position.y+1.2,cityAvatar.position.z);
+  updateCityMinimap(dt);
+  if(cityCrimeHud){cityCrimeHud.style.display='block';cityCrimeHud.textContent='ON FOOT · E: STEAL CAR · F: ENTER/EXIT';}
+  actualSpeed=0;
 }
 function startDragRace() {
   if (dragRaceActive || !player || Math.abs(player.position.x)>8 || Math.abs(player.position.z+520)>9 || Math.cos(cityHeading)<0.7) return;
