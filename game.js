@@ -1033,9 +1033,9 @@ function getTrafficPaceKmh() {
     ? policeChasers.reduce((sum, unit) => sum + (unit.speed || 0), 0) / policeChasers.length
     : actualSpeed;
   return THREE.MathUtils.clamp(
-    Math.max(actualSpeed * 0.55, policeAverage * 0.5, 58),
-    55,
-    85
+    Math.max(actualSpeed * 0.78, policeAverage * 0.72, 105),
+    105,
+    155
   );
 }
 
@@ -1058,7 +1058,7 @@ function spawnTraffic() {
 
   // Spawn into a spread of distance bands so cars are already visible well
   // before the player reaches them, without appearing in a single distant wall.
-  const spawnBands = [-115, -145, -175, -205];
+  // Spawn beyond the fog horizon so traffic emerges gradually instead of popping into nearby lanes.\n  const spawnBands = [-345, -385, -425];
   const laneOptions = roadMode === 'one-way'
     ? [...lanes]
     : [...lanes];
@@ -1082,7 +1082,7 @@ function spawnTraffic() {
   const { lane, z, oncoming } = spawn;
   const difficulty = Math.min(8, Math.floor(score / 500));
   const paceOffset = (Math.random() - 0.5) * 24;
-  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset, 45, 85);
+  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset * 0.55, 95, 155);
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
   // In Police mode, keep exactly one marked suspect active at a time.
@@ -1964,7 +1964,7 @@ function updatePoliceChase(dt) {
           unit.angularVelocity = policeBody.omega;
           trafficCar.angularVelocity = trafficBody.omega;
           trafficCar.physicsVelX = trafficBody.vx - (trafficCar.laneVelocity || 0);
-          trafficCar.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 85 / 3.6) - trafficCar.botSpeed / 3.6;
+          trafficCar.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 155 / 3.6) - trafficCar.botSpeed / 3.6;
         }
       }
       for (const otherPolice of policeChasers) {
@@ -2063,7 +2063,11 @@ const steeringYaw = THREE.MathUtils.damp(
 );
 player.userData.steeringYaw = steeringYaw;
 placeOnRoad(player, playerLateral, 7, steeringYaw + collisionHeading);
-player.rotation.z = THREE.MathUtils.damp(player.rotation.z, -lateralMotion * 0.012 * (drifting ? 1.35 : 1) + collisionYaw, 5, dt);
+const bodyRollTarget = THREE.MathUtils.clamp(
+  -lateralMotion * 0.018 * (drifting ? 1.35 : 1) + collisionYaw,
+  -0.16, 0.16
+);
+player.rotation.z = THREE.MathUtils.damp(player.rotation.z, bodyRollTarget, drifting ? 3.8 : 4.6, dt);
 updateVehicleSignals(player, steer < 0 ? 'left' : steer > 0 ? 'right' : null, performance.now());
 player.userData.body.position.y = player.userData.bodyBaseY
   + Math.sin(performance.now() * 0.008) * Math.min(0.012, actualSpeed / 24000)
@@ -2076,7 +2080,7 @@ const lateralAcceleration = (steerVelocity - (player.userData.previousLateralVel
 player.userData.previousLateralVelocity = steerVelocity;
 player.userData.body.rotation.z = THREE.MathUtils.damp(
   player.userData.body.rotation.z || 0,
-  THREE.MathUtils.clamp(-lateralAcceleration * 0.0045, -0.065, 0.065), 3.2, dt
+  THREE.MathUtils.clamp(-lateralAcceleration * 0.0085, -0.12, 0.12), 4.2, dt
 );
 for (const wheel of player.userData.wheels) wheel.rotation.x += actualSpeed / 3.6 * dt * 0.85;
 }
@@ -2162,14 +2166,14 @@ function updateTraffic(dt, previousPlayer) {
       }
 
 
-      const cruise = THREE.MathUtils.clamp(62 + (item.paceOffset || 0) * 0.25, 52, 85);
+      const cruise = THREE.MathUtils.clamp(118 + (item.paceOffset || 0) * 0.35, 105, 155);
       const followTarget = leader && gap < desiredGap
         ? Math.max(42, leader.botSpeed - (desiredGap - gap) * 1.25)
         : cruise;
       const targetSpeed = Math.min(cruise, followTarget);
       item.botSpeed = THREE.MathUtils.clamp(
         THREE.MathUtils.damp(item.botSpeed, targetSpeed, targetSpeed < item.botSpeed ? 2.4 : 1.15, dt),
-        0, 85
+        0, 155
       );
 
       const previousLateral = item.lateralX;
@@ -2186,14 +2190,14 @@ function updateTraffic(dt, previousPlayer) {
       // Oncoming cars keep a predictable speed and never use same-direction
       // lane-change logic.
       item.botSpeed = THREE.MathUtils.clamp(
-        THREE.MathUtils.damp(item.botSpeed, 68 + (item.paceOffset || 0) * 0.2, 1.0, dt), 48, 85
+        THREE.MathUtils.damp(item.botSpeed, 132 + (item.paceOffset || 0) * 0.3, 1.0, dt), 115, 155
       );
     }
 
     // Keep the base speed and collision carry velocity inside a hard traffic cap.
-    item.botSpeed = THREE.MathUtils.clamp(item.botSpeed, 0, 85);
+    item.botSpeed = THREE.MathUtils.clamp(item.botSpeed, 0, 155);
     item.physicsVelZ = THREE.MathUtils.clamp(item.physicsVelZ || 0,
-      -item.botSpeed / 3.6, (85 - item.botSpeed) / 3.6);
+      -item.botSpeed / 3.6, (155 - item.botSpeed) / 3.6);
     const botMps = item.botSpeed / 3.6 * 2;
     item.pathZ += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
     // Collision impulses are persistent velocity, not one-frame position snaps.
@@ -2227,8 +2231,8 @@ function updateTraffic(dt, previousPlayer) {
         const leaderBody = { vx: (leader.laneVelocity || 0) + (leader.physicsVelX || 0), vz: leader.botSpeed / 3.6 + (leader.physicsVelZ || 0) };
         resolveVehicleImpulse(followerBody, leaderBody, 0, -1,
           follower.mesh.userData.massKg || 1650, leader.mesh.userData.massKg || 1650, 0.1);
-        follower.physicsVelZ = THREE.MathUtils.clamp(followerBody.vz, 0, 85 / 3.6) - follower.botSpeed / 3.6;
-        leader.physicsVelZ = THREE.MathUtils.clamp(leaderBody.vz, 0, 85 / 3.6) - leader.botSpeed / 3.6;
+        follower.physicsVelZ = THREE.MathUtils.clamp(followerBody.vz, 0, 155 / 3.6) - follower.botSpeed / 3.6;
+        leader.physicsVelZ = THREE.MathUtils.clamp(leaderBody.vz, 0, 155 / 3.6) - leader.botSpeed / 3.6;
         follower.pathZ = leader.pathZ + safeGap;
       }
     }
@@ -2331,7 +2335,7 @@ function updateTraffic(dt, previousPlayer) {
         item.pathZ = 7 + longitudinalSide * (combinedLength + 0.14);
       }
       item.physicsVelX = trafficBody.vx - item.laneVelocity;
-      item.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 85 / 3.6) - item.botSpeed / 3.6;
+      item.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 155 / 3.6) - item.botSpeed / 3.6;
       item.angularVelocity = trafficBody.omega;
       collisionAngularVelocity = playerBody.omega;
       item.targetLane = item.lane = item.lateralX;
