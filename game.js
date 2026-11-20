@@ -2700,8 +2700,8 @@ function spawnCityPolice() {
   const mesh=createCar(0x172b46,false,2);
   addPoliceLightbar(mesh);
   // Spawn on an actual street behind the player, not randomly inside a block.
-  const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.7;
-  const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*58,0,Math.cos(angle)*58));
+  const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.32;
+  const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*34,0,Math.cos(angle)*34));
   const axis=Math.abs(spawn.x-player.position.x)>=Math.abs(spawn.z-player.position.z)?'x':'z';
   const lane=(Math.random()<0.5?-1:1)*3.8;
   if(axis==='x') {
@@ -2714,7 +2714,9 @@ function spawnCityPolice() {
   const sign=axis==='x'?(player.position.x>=mesh.position.x?1:-1):(player.position.z>=mesh.position.z?1:-1);
   mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
   scene.add(mesh);
-  cityPolice.push({mesh,axis,sign,lane,speed:0,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
+  // Cruisers enter the pursuit already moving so the player is not waiting
+  // for them to accelerate from a standstill.
+  cityPolice.push({mesh,axis,sign,lane,speed:29,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
 }
 function spawnCityRepairPickup() {
   if(cityRepairPickups.length>=3)return;
@@ -2868,15 +2870,17 @@ function updateOpenCity(dt,stats) {
     const desired=cop.axis==='x'?(cop.sign>0?Math.PI/2:-Math.PI/2):(cop.sign>0?0:Math.PI);
     mesh.rotation.y=desired;
     const distance=mesh.position.distanceTo(player.position);
-    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+9,19,34);
-    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,2.0,dt);
+    // Keep police substantially faster than the player so they close gaps
+    // quickly, while retaining a speed cap for stable city-grid movement.
+    const targetSpeed=THREE.MathUtils.clamp(Math.abs(citySpeedMps)+17,30,43);
+    cop.speed=THREE.MathUtils.damp(cop.speed,targetSpeed,4.8,dt);
     if(cop.axis==='x')mesh.position.x+=cop.sign*cop.speed*dt;
     else mesh.position.z+=cop.sign*cop.speed*dt;
     // Keep the pursuit car inside the playable city and recycle it behind
     // the player if it falls far outside the chase area.
     if(Math.abs(mesh.position.x-player.position.x)>310||Math.abs(mesh.position.z-player.position.z)>310) {
-      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.45;
-      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*62,0,Math.cos(angle)*62));
+      const angle=cityHeading+Math.PI+(Math.random()-0.5)*0.32;
+      const spawn=player.position.clone().add(new THREE.Vector3(Math.sin(angle)*36,0,Math.cos(angle)*36));
       cop.axis=Math.random()<0.5?'x':'z';
       cop.lane=(Math.random()<0.5?-1:1)*3.8;
       if(cop.axis==='x')mesh.position.set(spawn.x,0,Math.round(spawn.z/CITY_BLOCK)*CITY_BLOCK+cop.lane);
