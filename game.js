@@ -1787,7 +1787,9 @@ function updatePoliceChase(dt) {
       unit.impactVelX = THREE.MathUtils.damp(unit.impactVelX || 0, 0, 1.7, dt);
       unit.impactVelZ = THREE.MathUtils.damp(unit.impactVelZ || 0, 0, 1.7, dt);
       unit.collisionHeading = THREE.MathUtils.clamp((unit.collisionHeading || 0) + (unit.angularVelocity || 0) * dt, -0.48, 0.48);
-      unit.angularVelocity = THREE.MathUtils.damp(unit.angularVelocity || 0, 0, 1.8, dt);
+      unit.angularVelocity = THREE.MathUtils.damp(unit.angularVelocity || 0, 0, 2.0, dt);
+      // Police cars also recover their straight-ahead heading after impact.
+      unit.collisionHeading = THREE.MathUtils.damp(unit.collisionHeading, 0, 1.25, dt);
       // Collision impulses briefly push a cruiser away before its AI regains control.
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity, 0, 0.7, dt);
       unit.longitudinalVelocity = THREE.MathUtils.damp(unit.longitudinalVelocity, 0, 0.85, dt);
@@ -1937,7 +1939,10 @@ steerVelocity = THREE.MathUtils.damp(
 const previousLateral = playerLateral;
 playerLateral = THREE.MathUtils.clamp(playerLateral + (steerVelocity + collisionRecoil) * dt, -8, 8);
 collisionHeading = THREE.MathUtils.clamp(collisionHeading + collisionAngularVelocity * dt, -0.48, 0.48);
-collisionAngularVelocity = THREE.MathUtils.damp(collisionAngularVelocity, 0, 1.9, dt);
+// Angular velocity and heading both settle, so a hit can turn the car
+// without leaving it permanently crabbed sideways.
+collisionAngularVelocity = THREE.MathUtils.damp(collisionAngularVelocity, 0, 2.2, dt);
+collisionHeading = THREE.MathUtils.damp(collisionHeading, 0, 1.35, dt);
 collisionRecoil = THREE.MathUtils.damp(collisionRecoil, 0, 2.8, dt);
 collisionYaw = THREE.MathUtils.damp(collisionYaw, 0, 3.2, dt);
 if (playerLateral === -8 || playerLateral === 8) steerVelocity *= 0.35;
@@ -1948,10 +1953,13 @@ const longitudinalAcceleration = THREE.MathUtils.clamp(
   (currentSpeedMps - previousSpeedMps) / Math.max(dt, 0.001), -9, 6
 );
 player.userData.previousSpeedMps = currentSpeedMps;
+// Turn the car body into the direction of steering, then self-centre
+// when the steering input is released. Lateral movement remains responsive.
+const steeringYawTarget = steer * THREE.MathUtils.clamp(0.12 + actualSpeed / 1500, 0.12, 0.25);
 const steeringYaw = THREE.MathUtils.damp(
   player.userData.steeringYaw || 0,
-  -THREE.MathUtils.clamp(lateralMotion * 0.018, -0.16, 0.16),
-  5.5,
+  steeringYawTarget,
+  steer === 0 ? 5.8 : 7.5,
   dt
 );
 player.userData.steeringYaw = steeringYaw;
@@ -2111,7 +2119,9 @@ function updateTraffic(dt, previousPlayer) {
     item.lateralX += (item.laneVelocity || 0) * 0 + (item.physicsVelX || 0) * dt;
     item.physicsVelX = THREE.MathUtils.damp(item.physicsVelX || 0, 0, 1.45, dt);
     item.collisionHeading = THREE.MathUtils.clamp((item.collisionHeading || 0) + (item.angularVelocity || 0) * dt, -0.5, 0.5);
-    item.angularVelocity = THREE.MathUtils.damp(item.angularVelocity || 0, 0, 1.9, dt);
+    item.angularVelocity = THREE.MathUtils.damp(item.angularVelocity || 0, 0, 2.1, dt);
+    // Let traffic straighten after a collision instead of keeping a permanent yaw.
+    item.collisionHeading = THREE.MathUtils.damp(item.collisionHeading, 0, 1.25, dt);
     for (const wheel of (item.mesh.userData.wheels || [])) {
       wheel.rotation.x += item.botSpeed / 3.6 * dt;
     }
