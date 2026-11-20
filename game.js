@@ -111,6 +111,8 @@ let collisionAngularVelocity = 0;
 let collisionHeading = 0;
 let gameMode = 'escape'; // This build has one mode: escape the police.
 let policeChasers = [];
+let repairPickups = [];
+let repairSpawnTimer = 10;
 let policeCatchTime = 0;
 let escapeProgress = 0;
 let arrests = 0;
@@ -1305,6 +1307,9 @@ for (const unit of policeChasers) {
   unit.observedPlayerSpeed = 0;
 }
 playerHealth = 100;
+repairSpawnTimer = 8;
+for (const pickup of repairPickups) scene.remove(pickup.mesh);
+repairPickups.length = 0;
 const healthValue = $('health-value');
 if (healthValue) {
   healthValue.textContent = '100%';
@@ -1650,7 +1655,7 @@ function spawnPoliceChaser(offset = 0) {
   const pathZ = 42 + index * 8;
   placeOnRoad(car, lateral, pathZ, 0);
   policeChasers.push({
-    mesh: car, pathZ, lateral, speed: 10, offset, role,
+    mesh: car, pathZ, lateral, speed: 10, offset, role, health: 100, ramCooldown: 0, disabled: false,
     massKg: 1950, impactVelX: 0, impactVelZ: 0, angularVelocity: 0, collisionHeading: 0,
     lateralVelocity: 0, longitudinalVelocity: 0
   });
@@ -1738,63 +1743,90 @@ function damagePlayer(amount = 3) {
   }
 }
 
+function updateHealthDisplay() {
+  const value = $('health-value');
+  const bar = $('health-bar');
+  if (value) value.textContent = `${Math.ceil(playerHealth)}%`;
+  if (bar) bar.style.width = `${playerHealth}%`;
+}
+function spawnRepairPickup() {
+  const pickup = new THREE.Group();
+  const glow = new THREE.Mesh(new THREE.TorusGeometry(0.72, 0.09, 8, 24), new THREE.MeshBasicMaterial({ color: 0x55ff9a, toneMapped: false }));
+  glow.rotation.x = Math.PI / 2;
+  glow.position.y = 0.35;
+  const caseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.55, 0.65), material(0xe9f5ed, 0.35, 0.12, { emissive: 0x174a2a }));
+  caseMesh.position.y = 0.65;
+  const crossV = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.08, 0.62), new THREE.MeshBasicMaterial({ color: 0x20b85a }));
+  const crossH = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.08, 0.18), new THREE.MeshBasicMaterial({ color: 0x20b85a }));
+  crossV.position.set(0, 0.66, 0); crossH.position.set(0, 0.66, 0);
+  pickup.add(glow, caseMesh, crossV, crossH);
+  const lateral = lanes[Math.floor(Math.random() * lanes.length)];
+  const pathZ = -155 - Math.random() * 35;
+  placeOnRoad(pickup, lateral, pathZ);
+  scene.add(pickup);
+  repairPickups.push({ mesh: pickup, lateral, pathZ });
+}
+function updateRepairPickups(dt) {
+  if (!running) return;
+  repairSpawnTimer -= dt;
+  if (repairSpawnTimer <= 0 && repairPickups.length < 2) {
+    spawnRepairPickup();
+    repairSpawnTimer = 17 + Math.random() * 8;
+  }
+  const move = actualSpeed / 3.6 * 2 * dt;
+  for (let i = repairPickups.length - 1; i >= 0; i--) {
+    const pickup = repairPickups[i];
+    pickup.pathZ += move;
+    pickup.mesh.rotation.y += dt * 1.2;
+    placeOnRoad(pickup.mesh, pickup.lateral, pickup.pathZ);
+    if (Math.abs(pickup.pathZ - 7) < 3.2 && Math.abs(pickup.lateral - playerLateral) < 2.1 && playerHealth < 100) {
+      playerHealth = Math.min(100, playerHealth + 35);
+      updateHealthDisplay();
+      scene.remove(pickup.mesh);
+      repairPickups.splice(i, 1);
+      const toast = $('near-miss');
+      if (toast) {
+        toast.textContent = 'REPAIR KIT · +35% HEALTH';
+        toast.classList.add('show');
+        window.clearTimeout(updateRepairPickups.toastTimeout);
+        updateRepairPickups.toastTimeout = window.setTimeout(() => toast.classList.remove('show'), 1100);
+      }
+      playTone(660, 0.16, 'sine', 0.045);
+      continue;
+    }
+    if (pickup.pathZ > 25) {
+      scene.remove(pickup.mesh);
+      repairPickups.splice(i, 1);
+    }
+  }
+}
+
 function updatePoliceChase(dt) {
   if (!running) return;
   if (gameMode === 'escape') {
-    // Four officers start the pursuit; two more join every 300 metres.
+    // Police pursue the player directly instead of forming roadblocks.
     const targetPoliceCount = 4 + Math.floor(score / 300) * 2;
     while (policeChasers.length < targetPoliceCount) {
       const index = policeChasers.length;
-      const role = ['front', 'rear', 'left', 'right'][index % 4];
-      const offset = role === 'left' ? -3.35 : role === 'right' ? 3.35 : 0;
+      const offset = (index % 2 === 0 ? -1 : 1) * (1.2 + (index % 3) * 0.65);
       spawnPoliceChaser(offset);
     }
-
     const policeMaxSpeed = Math.min(200, 10 + Math.max(0, score) * (190 / 300));
-    let frontReady = false;
-    let rearReady = false;
-    let sideReady = false;
-
     for (const unit of policeChasers) {
+      if (unit.disabled) continue;
+      unit.ramCooldown = Math.max(0, (unit.ramCooldown || 0) - dt);
       const phase = Math.floor(performance.now() / 170) % 2;
       if (unit.mesh.userData.policeLightParts) {
         unit.mesh.userData.policeLightParts[0].visible = phase === 0;
         unit.mesh.userData.policeLightParts[1].visible = phase === 1;
       }
 
-      const role = unit.role;
-      // Police take a moment to notice braking, rather than instantly matching the player's speed.
-      unit.observedPlayerSpeed = THREE.MathUtils.damp(
-        unit.observedPlayerSpeed ?? actualSpeed, actualSpeed, 1.35, dt
-      );
-      let targetZ = 7;
-      let targetLane = playerLateral;
-      let targetSpeed = policeMaxSpeed;
-      let approachRate = 1.1;
-
-      if (role === 'front') {
-        // The lead cruiser pulls ahead, then slows down to block the road.
-        targetZ = -10;
-        targetSpeed = Math.max(10, Math.min(policeMaxSpeed, unit.observedPlayerSpeed - 42));
-        targetLane = playerLateral;
-        approachRate = 0.72;
-      } else if (role === 'rear') {
-        // One cruiser stays behind to stop the player escaping backwards.
-        targetZ = 21;
-        targetLane = playerLateral;
-        approachRate = 0.9;
-      } else {
-        // Side units try to close the available escape lane, but follow
-        // gradually so a quick lane change can still get past them.
-        const side = role === 'left' ? -1 : 1;
-        targetZ = 7 + (role === 'left' ? -2.5 : 2.5);
-        targetLane = THREE.MathUtils.clamp(playerLateral + side * 3.35, -7.2, 7.2);
-        approachRate = 0.62;
-      }
-
-      // Pursuit steering accelerates toward a target instead of teleporting
-      // the cruiser to a desired position every frame.
-      const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * approachRate, -5.5, 5.5);
+      // Aim for the player's current position and accelerate to make contact.
+      const targetZ = 7;
+      const targetLane = playerLateral;
+      const targetSpeed = Math.min(policeMaxSpeed, Math.max(55, actualSpeed + 28));
+      const approachRate = 1.65;
+      const desiredLateralVelocity = THREE.MathUtils.clamp((targetLane - unit.lateral) * approachRate, -9, 9);
       unit.lateralVelocity = THREE.MathUtils.damp(unit.lateralVelocity || 0, desiredLateralVelocity, 2.8, dt);
       unit.lateral += unit.lateralVelocity * dt;
       if (unit.lateral < -7.65 || unit.lateral > 7.65) {
@@ -1802,7 +1834,7 @@ function updatePoliceChase(dt) {
         unit.lateralVelocity *= -0.18;
       }
       unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed, 1.8, dt);
-      const desiredLongitudinalVelocity = THREE.MathUtils.clamp((targetZ - unit.pathZ) * approachRate, -12, 12);
+      const desiredLongitudinalVelocity = THREE.MathUtils.clamp((targetZ - unit.pathZ) * approachRate, -24, 24);
       unit.longitudinalVelocity = THREE.MathUtils.damp(
         unit.longitudinalVelocity || 0, desiredLongitudinalVelocity, 2.4, dt
       );
@@ -1838,6 +1870,23 @@ function updatePoliceChase(dt) {
       );
       if (playerHit) {
         damagePlayer(3);
+        const ramSpeed = Math.max(0, actualSpeed - unit.speed * 0.35);
+        if (unit.ramCooldown <= 0 && ramSpeed >= 45) {
+          unit.health = Math.max(0, unit.health - (ramSpeed >= 90 ? 55 : 30));
+          unit.ramCooldown = 0.85;
+          if (unit.health <= 0) {
+            unit.disabled = true;
+            scene.remove(unit.mesh);
+            awardCredits(15);
+            const toast = $('near-miss');
+            if (toast) {
+              toast.textContent = 'POLICE CAR DISABLED · +15 CREDITS';
+              toast.classList.add('show');
+              window.clearTimeout(updatePoliceChase.toastTimeout);
+              updatePoliceChase.toastTimeout = window.setTimeout(() => toast.classList.remove('show'), 1100);
+            }
+          }
+        }
         const normalX = contactDx || (unit.offset >= 0 ? -1 : 1);
         const normalZ = contactDz || 0;
         const playerBody = {
@@ -1912,34 +1961,10 @@ function updatePoliceChase(dt) {
       }
       placeOnRoad(unit.mesh, unit.lateral, unit.pathZ, unit.collisionHeading || 0);
 
-      const laneDifference = Math.abs(unit.lateral - playerLateral);
-      // Use wider contact zones so small positioning differences do not
-      // prevent a real roadblock from registering as a capture.
-      if (role === 'front' && unit.pathZ >= -22 && unit.pathZ <= -3 && laneDifference < 4.6) frontReady = true;
-      if (role === 'rear' && unit.pathZ >= 3 && unit.pathZ <= 30 && laneDifference < 4.6) rearReady = true;
-      if ((role === 'left' || role === 'right') &&
-          Math.abs(unit.pathZ - 7) < 8 &&
-          laneDifference >= 1.6 && laneDifference < 6.2) sideReady = true;
     }
-
-    // A roadblock is a capture when officers hold all three sides and the
-    // player has slowed enough that the gap is no longer realistically escapable.
-    const boxedIn = frontReady && rearReady && sideReady;
-    if (boxedIn && actualSpeed < 55) policeCatchTime += dt;
-    else policeCatchTime = Math.max(0, policeCatchTime - dt * 3.2);
-
-    if (policeCatchTime >= 1.0) {
-      $('game-over-title').textContent = 'BOXED IN!';
-      finishGame();
-      return;
-    }
-
+    const activePolice = policeChasers.filter((unit) => !unit.disabled).length;
     const label = $('chase-status');
-    if (label) {
-      if (boxedIn) label.textContent = 'BOXED IN · ACCELERATE OR STEER OUT!';
-      else if (frontReady || rearReady || sideReady) label.textContent = 'POLICE SETTING UP A ROADBLOCK · EVADE!';
-      else label.textContent = 'POLICE PURSUIT · FIND A GAP!';
-    }
+    if (label) label.textContent = 'POLICE RAMMING PURSUIT · ' + activePolice + ' ACTIVE · EVADE OR RAM BACK!';
   } else {
     const label = $('chase-status');
     if (label) label.textContent = 'VEHICLES STOPPED · ' + arrests + '/5';
@@ -2374,6 +2399,7 @@ addSparks(player.position.clone().add(new THREE.Vector3((Math.random() - 0.5) * 
 updateWorld(dt);
 updatePlayer(dt);
 updateTraffic(dt, previousPlayer);
+updateRepairPickups(dt);
 // Advance distance before the chase so police speed and backup waves use
 // the current frame's distance, not a one-frame-old score.
 score += actualSpeed / 3.6 * dt;
