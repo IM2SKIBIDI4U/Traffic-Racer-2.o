@@ -2693,6 +2693,21 @@ function createOpenCityWorld() {
     windows.castShadow=false;windows.receiveShadow=false;
     cityRoot.add(windows);
   }
+  // Zebra crossings and stop bars at selected intersections add street detail.
+  const zebraGeo=new THREE.BoxGeometry(0.62,0.04,3.4);
+  const zebraMat=material(0xe4e5df,0.86);
+  const zebra=new THREE.InstancedMesh(zebraGeo,zebraMat,8*8*2*7*4);
+  const zebraDummy=new THREE.Object3D(); let zebraIndex=0;
+  for(let gx=-6;gx<=6;gx+=2) for(let gz=-6;gz<=6;gz+=2) {
+    const ix=gx*CITY_BLOCK, iz=gz*CITY_BLOCK;
+    for(let n=-3;n<=3;n++) {
+      zebraDummy.position.set(ix-7.2,0.075,iz+n*1.05); zebraDummy.rotation.y=Math.PI/2; zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
+      zebraDummy.position.set(ix+7.2,0.075,iz+n*1.05); zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
+      zebraDummy.position.set(ix+n*1.05,0.075,iz-7.2); zebraDummy.rotation.y=0; zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
+      zebraDummy.position.set(ix+n*1.05,0.075,iz+7.2); zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
+    }
+  }
+  zebra.count=zebraIndex; zebra.instanceMatrix.needsUpdate=true; cityRoot.add(zebra);
   // Drag-race gates mark the central avenue start and finish.
   const raceGateMat=material(0x293a45,0.55,0.25);
   for(const z of [-520,-220]) {
@@ -2849,7 +2864,7 @@ function updateCityMinimap(dt) {
   ctx.restore();
   ctx.font = 'bold 10px Arial';
   ctx.fillStyle = '#45d9ff'; ctx.fillText('YOU', 8, 15);
-  ctx.fillStyle = '#ff6569'; ctx.fillText('POLICE', 42, 15);
+  ctx.fillStyle = '#a9c5d5'; ctx.fillText('CITY', 42, 15);
 }
 function startDragRace() {
   if (dragRaceActive || !player || Math.abs(player.position.x)>8 || Math.abs(player.position.z+520)>9 || Math.cos(cityHeading)<0.7) return;
