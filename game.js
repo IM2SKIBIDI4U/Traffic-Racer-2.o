@@ -2022,9 +2022,9 @@ const speedRatio = THREE.MathUtils.clamp(actualSpeed / Math.max(1, spec.maxSpeed
 // Handling upgrades improve response without multiplying the steering angle
 // into extreme values at every speed.
 const handlingFactor = THREE.MathUtils.clamp((spec.handling || 8) / 8.5, 0.82, 1.2);
-const lateralAcceleration = steer * (4.2 + speedRatio * 7.2) * handlingFactor;
+const steeringInputAcceleration = steer * (4.2 + speedRatio * 7.2) * handlingFactor;
 if (steer !== 0) {
-  steerVelocity += lateralAcceleration * dt * (drifting ? 1.18 : 1);
+  steerVelocity += steeringInputAcceleration * dt * (drifting ? 1.18 : 1);
 } else {
   steerVelocity = THREE.MathUtils.damp(steerVelocity, 0, drifting ? 1.4 : 3.8, dt);
 }
