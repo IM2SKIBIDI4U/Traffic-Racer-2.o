@@ -2588,28 +2588,54 @@ function updateTraffic(dt, previousPlayer) {
 // Build lightweight, invisible box colliders from individual GLB meshes.
 // A spatial hash keeps collision checks local instead of scanning the whole city.
 const CITY_COLLISION_CELL = 24;
+const CITY_GROUND_CELL = CITY_COLLISION_CELL;
 let cityCollisionGrid = new Map();
 let cityCollisionCount = 0;
+let cityGroundGrid = new Map();
+let cityLargeGroundMeshes = [];
+let cityGroundFloorY = 0;
+let cityGroundCeilingY = 0;
+const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
+  cityGroundGrid.clear();
+  cityLargeGroundMeshes = [];
   root.updateMatrixWorld(true);
+  const worldBounds = new THREE.Box3().setFromObject(root);
+  cityGroundFloorY = worldBounds.min.y;
+  cityGroundCeilingY = worldBounds.max.y;
   const bounds = new THREE.Box3();
   const size = new THREE.Vector3();
-  const center = new THREE.Vector3();
-  const addToCell = (key, collider) => {
-    let bucket = cityCollisionGrid.get(key);
-    if (!bucket) cityCollisionGrid.set(key, bucket = []);
-    bucket.push(collider);
+  const addCell = (grid, key, value) => {
+    let bucket = grid.get(key);
+    if (!bucket) grid.set(key, bucket = []);
+    bucket.push(value);
   };
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry) return;
     bounds.setFromObject(object);
     if (bounds.isEmpty()) return;
     bounds.getSize(size);
-    bounds.getCenter(center);
-    // Ignore terrain slabs, road surfaces, tiny props and giant combined meshes.
+    const name = (object.name || '').toLowerCase();
+    const namedGround = /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(name);
+    const broadSurface = size.y <= 1.25 && size.x >= 2 && size.z >= 2;
+    if (namedGround || broadSurface) {
+      const minX = Math.floor(bounds.min.x / CITY_GROUND_CELL);
+      const maxX = Math.floor(bounds.max.x / CITY_GROUND_CELL);
+      const minZ = Math.floor(bounds.min.z / CITY_GROUND_CELL);
+      const maxZ = Math.floor(bounds.max.z / CITY_GROUND_CELL);
+      const cellCount = (maxX - minX + 1) * (maxZ - minZ + 1);
+      if (cellCount > 900) cityLargeGroundMeshes.push(object);
+      else {
+        for (let x = minX; x <= maxX; x++) {
+          for (let z = minZ; z <= maxZ; z++) addCell(cityGroundGrid, x + ',' + z, object);
+        }
+      }
+    }
+    // Building hitboxes are simplified AABBs. Road and terrain meshes are
+    // handled by the ground-height sampler instead.
     if (size.y < 1.25 || size.x < 0.8 || size.z < 0.8) return;
     if (size.x > 90 || size.z > 90 || size.y > 180) return;
     const collider = {
@@ -2623,49 +2649,60 @@ function buildCityCollisionGrid(root) {
     const maxCellZ = Math.floor(collider.maxZ / CITY_COLLISION_CELL);
     for (let x = minCellX; x <= maxCellX; x++) {
       for (let z = minCellZ; z <= maxCellZ; z++) {
-        addToCell(x + ',' + z, collider);
+        addCell(cityCollisionGrid, x + ',' + z, collider);
       }
     }
     cityCollisionCount++;
   });
-  console.info('Generated simplified city hitboxes:', cityCollisionCount);
+  console.info('Generated city ground and building hitboxes:', cityGroundGrid.size, cityLargeGroundMeshes.length, cityCollisionCount);
+}
+function cityGroundMeshesAt(x, z) {
+  const candidates = new Set(cityLargeGroundMeshes);
+  const cellX = Math.floor(x / CITY_GROUND_CELL);
+  const cellZ = Math.floor(z / CITY_GROUND_CELL);
+  for (let ox = -1; ox <= 1; ox++) {
+    for (let oz = -1; oz <= 1; oz++) {
+      for (const mesh of cityGroundGrid.get((cellX + ox) + ',' + (cellZ + oz)) || []) candidates.add(mesh);
+    }
+  }
+  return [...candidates];
+}
+function cityGroundHeightAt(x, z) {
+  const meshes = cityGroundMeshesAt(x, z);
+  if (!meshes.length) return null;
+  cityGroundRaycaster.ray.origin.set(x, cityGroundCeilingY + 10, z);
+  cityGroundRaycaster.ray.direction.set(0, -1, 0);
+  cityGroundRaycaster.near = 0;
+  cityGroundRaycaster.far = Math.max(20, cityGroundCeilingY - cityGroundFloorY + 20);
+  const hits = cityGroundRaycaster.intersectObjects(meshes, false);
+  const normalMatrix = new THREE.Matrix3();
+  for (const hit of hits) {
+    if (!hit.face || hit.point.y < cityGroundFloorY - 0.5) continue;
+    normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+    const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+    if (normal.y < 0.88 || cityPositionBlocked(x, z, hit.point.y)) continue;
+    return hit.point.y;
+  }
+  return null;
+}
+function citySafeGroundY(x, z) {
+  const surfaceY = cityGroundHeightAt(x, z);
+  return surfaceY === null ? Math.max(0.65, cityGroundFloorY + 0.65) : surfaceY + 0.12;
 }
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
-  const meshes = [];
-  root.traverse((object) => {
-    if (object.isMesh && object.geometry) meshes.push(object);
-  });
-  if (!meshes.length) return new THREE.Vector3(0, 4, 0);
-  const mapBounds = new THREE.Box3().setFromObject(root);
-  const mapSize = mapBounds.getSize(new THREE.Vector3());
-  const raycaster = new THREE.Raycaster();
-  const origin = new THREE.Vector3();
-  const down = new THREE.Vector3(0, -1, 0);
-  const normalMatrix = new THREE.Matrix3();
   let best = null;
   let bestScore = Infinity;
-  // Search a wider area around the city centre so a gap or blocked
-  // intersection there does not force the player onto the map's bottom.
-  const rayStartY = mapBounds.max.y + 10;
-  raycaster.far = mapSize.y + 30;
+  // The ground mesh grid limits each raycast to surfaces near that candidate,
+  // instead of raycasting against every mesh in the 85 MB city model.
   for (let x = -100; x <= 100; x += 20) {
     for (let z = -100; z <= 100; z += 20) {
-      origin.set(x, rayStartY, z);
-      raycaster.set(origin, down);
-      const hits = raycaster.intersectObjects(meshes, false);
-      for (const hit of hits) {
-        if (!hit.face || hit.point.y < -1 || hit.point.y > 12) continue;
-        normalMatrix.getNormalMatrix(hit.object.matrixWorld);
-        const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
-        if (Math.abs(normal.y) < 0.88) continue;
-        if (cityPositionBlocked(x, z, hit.point.y)) continue;
-        const score = Math.hypot(x, z);
-        if (score < bestScore) {
-          bestScore = score;
-          best = new THREE.Vector3(x, Math.max(0, hit.point.y), z);
-        }
-        break;
+      const groundY = cityGroundHeightAt(x, z);
+      if (groundY === null || groundY < -1 || groundY > 30) continue;
+      const score = Math.hypot(x, z);
+      if (score < bestScore) {
+        bestScore = score;
+        best = new THREE.Vector3(x, groundY + 0.12, z);
       }
     }
   }
@@ -2673,10 +2710,8 @@ function findCityRoadsideSpawn(root) {
     console.info('Selected clear roadside spawn:', best.toArray());
     return best;
   }
-  // The imported map is normalized to start at y=0. Keep the emergency
-  // spawn above that floor instead of placing the car inside/below the map.
-  console.warn('No clear road surface found near the map centre; using an elevated fallback spawn.');
-  return new THREE.Vector3(0, 4, 0);
+  console.warn('No clear city ground found; placing the player above the map base.');
+  return new THREE.Vector3(0, Math.max(0.65, cityGroundFloorY + 0.65), 0);
 }
 
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
