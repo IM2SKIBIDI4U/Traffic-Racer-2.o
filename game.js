@@ -2765,8 +2765,9 @@ function createOpenCityWorld() {
     const mapScale = 1400 / horizontalSize;
     map.scale.setScalar(mapScale);
     map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
-    // Keep the imported textures, but use unlit materials for the huge city
-    // asset. This avoids expensive PBR lighting on thousands of city surfaces.
+    // Keep the imported textures, but use cached unlit materials so meshes
+    // that share a source material do not allocate duplicate GPU materials.
+    const fastMaterialCache = new Map();
     map.traverse((object) => {
       if (!object.isMesh) return;
       object.castShadow = false;
@@ -2774,8 +2775,11 @@ function createOpenCityWorld() {
       object.frustumCulled = true;
       const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
       const fastMaterials = sourceMaterials.map((mat) => {
-        if (!mat) return new THREE.MeshBasicMaterial({ color: 0xcccccc });
-        return new THREE.MeshBasicMaterial({
+        if (!mat) {
+          if (!fastMaterialCache.has('fallback')) fastMaterialCache.set('fallback', new THREE.MeshBasicMaterial({ color: 0xcccccc }));
+          return fastMaterialCache.get('fallback');
+        }
+        if (!fastMaterialCache.has(mat.uuid)) fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
           map: mat.map || null,
           alphaMap: mat.alphaMap || null,
           color: 0xffffff,
@@ -2785,7 +2789,8 @@ function createOpenCityWorld() {
           alphaTest: mat.alphaTest || 0,
           side: THREE.FrontSide,
           depthWrite: mat.depthWrite !== false
-        });
+        }));
+        return fastMaterialCache.get(mat.uuid);
       });
       object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
     });
@@ -3051,17 +3056,17 @@ function updateOpenCity(dt,stats) {
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
-  // Keep the wheels just above the ground. This is the solid ground
-  // collision plane for the entire city, not just the decorative road meshes.
-  player.position.y=citySpawnPosition.y+0.12;
   // Invisible perimeter hitbox keeps the car inside the loaded city footprint.
   player.position.x=THREE.MathUtils.clamp(player.position.x,-CITY_HALF+14,CITY_HALF-14);
   player.position.z=THREE.MathUtils.clamp(player.position.z,-CITY_HALF+14,CITY_HALF-14);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
   const lateralSpeed=steer*citySpeedMps*0.12*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
+  // Follow the actual nearby road/terrain surface every frame. If a surface
+  // cannot be sampled, keep the car above the normalized map floor.
+  player.position.y=citySafeGroundY(player.position.x,player.position.z);
   // Stop the car at building hitboxes and reduce speed on impact.
-  if (cityCollisionCount && cityPositionBlocked(player.position.x, player.position.z)) {
+  if (cityCollisionCount && cityPositionBlocked(player.position.x, player.position.z, player.position.y-0.12)) {
     player.position.x = oldPosition.x;
     player.position.z = oldPosition.z;
     citySpeedMps *= -0.16;
@@ -3379,7 +3384,8 @@ function enterCityVehicle(target) {
   if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}
   if(target===cityParkedCar)cityParkedCar=null;
   if(player)player.visible=false;
-  player=target;player.visible=true;player.position.y=0;
+  player=target;player.visible=true;
+  player.position.y=citySafeGroundY(player.position.x,player.position.z);
   cityHeading=player.rotation.y;citySpeedMps=0;cityOnFoot=false;
   player.userData.body=player.userData.body||null;
   return true;
@@ -3405,6 +3411,7 @@ function updateCityOnFoot(dt) {
   cityAvatar.position.addScaledVector(direction,forward*7*dt);
   cityAvatar.position.x=THREE.MathUtils.clamp(cityAvatar.position.x,-CITY_HALF+5,CITY_HALF-5);
   cityAvatar.position.z=THREE.MathUtils.clamp(cityAvatar.position.z,-CITY_HALF+5,CITY_HALF-5);
+  cityAvatar.position.y=citySafeGroundY(cityAvatar.position.x,cityAvatar.position.z);
   cityAvatar.rotation.y=cityFootHeading;
   player.position.copy(cityAvatar.position);
   for(const bot of cityTraffic) {
