@@ -2645,12 +2645,12 @@ function findCityRoadsideSpawn(root) {
   const normalMatrix = new THREE.Matrix3();
   let best = null;
   let bestScore = Infinity;
-  // Only test a small local grid. The old 2,116 full-city raycasts caused
-  // a major loading freeze on large city GLBs.
+  // Search a wider area around the city centre so a gap or blocked
+  // intersection there does not force the player onto the map's bottom.
   const rayStartY = mapBounds.max.y + 10;
   raycaster.far = mapSize.y + 30;
-  for (let x = -40; x <= 40; x += 10) {
-    for (let z = -40; z <= 40; z += 10) {
+  for (let x = -100; x <= 100; x += 20) {
+    for (let z = -100; z <= 100; z += 20) {
       origin.set(x, rayStartY, z);
       raycaster.set(origin, down);
       const hits = raycaster.intersectObjects(meshes, false);
@@ -2673,8 +2673,10 @@ function findCityRoadsideSpawn(root) {
     console.info('Selected clear roadside spawn:', best.toArray());
     return best;
   }
-  console.warn('No clear road surface found near the map centre; using a low fallback spawn.');
-  return new THREE.Vector3(0, 0, 0);
+  // The imported map is normalized to start at y=0. Keep the emergency
+  // spawn above that floor instead of placing the car inside/below the map.
+  console.warn('No clear road surface found near the map centre; using an elevated fallback spawn.');
+  return new THREE.Vector3(0, 4, 0);
 }
 
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
