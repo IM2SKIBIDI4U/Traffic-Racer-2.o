@@ -2739,9 +2739,6 @@ function cityGroundHeightAt(x, z) {
     if (cityPositionBlocked(x, z, hit.point.y)) continue;
     return hit.point.y;
   }
-  if(citySpawnRoadBounds&&x>=citySpawnRoadBounds.minX&&x<=citySpawnRoadBounds.maxX&&z>=citySpawnRoadBounds.minZ&&z<=citySpawnRoadBounds.maxZ) {
-    return citySpawnRoadBounds.topY;
-  }
   return null;
 }
 function createCitySpawnRoad(spawn) {
@@ -2791,6 +2788,7 @@ function showWaterDeathScreen() {
     button.type='button';
     button.textContent='RESPAWN';
     Object.assign(button.style,{border:'0',borderRadius:'10px',padding:'13px 26px',background:'#21a9f5',color:'#06111b',font:'800 15px Arial,sans-serif',cursor:'pointer'});
+    button.addEventListener('pointerdown',(event)=>{event.preventDefault();respawnCityPlayer();});
     button.addEventListener('click',()=>respawnCityPlayer());
     card.append(title,detail,button);
     cityRespawnScreen.appendChild(card);
@@ -2848,7 +2846,6 @@ function findCityRoadsideSpawn(root) {
   for(const point of candidates) {
     const groundY=cityGroundHeightAt(point.x,point.z);
     if(groundY===null||groundY< -1||groundY>30)continue;
-    if(cityPositionBlocked(point.x,point.z,groundY))continue;
     const spawn=new THREE.Vector3(point.x,groundY+0.12,point.z);
     console.info('Selected city road spawn:',spawn.toArray());
     return spawn;
