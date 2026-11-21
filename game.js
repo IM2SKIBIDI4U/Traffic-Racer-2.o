@@ -19,14 +19,14 @@ camera.lookAt(0, 1, -22);
 
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false, depth: true });
 } catch {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.6));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.15));
+renderer.shadowMap.enabled = false;
+renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.06;
@@ -2624,11 +2624,15 @@ function createOpenCityWorld() {
     map.traverse((object) => {
       if (object.isMesh) {
         object.castShadow = false;
-        object.receiveShadow = true;
+        object.receiveShadow = false;
+        object.frustumCulled = true;
         if (object.material) {
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           for (const mat of materials) {
-            if (mat) mat.side = THREE.DoubleSide;
+            if (mat) {
+              mat.side = THREE.FrontSide;
+              mat.needsUpdate = true;
+            }
           }
         }
       }
