@@ -2596,7 +2596,7 @@ function createOpenCityWorld() {
 
   // Load the user's San Francisco city map from Git LFS. The model is centered
   // on the driving world and scaled to fit the existing city coordinate space.
-  const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/SanFrancisco_City.glb';
+  const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/Castelia%20City.glb';
   gltfLoader.load(mapUrl, (gltf) => {
     const map = gltf.scene;
     map.name = 'SanFrancisco_City';
