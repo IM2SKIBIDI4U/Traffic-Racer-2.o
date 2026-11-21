@@ -24,7 +24,7 @@ try {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.85));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.65));
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2699,7 +2699,6 @@ function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
 
 function createOpenCityWorld() {
   if (cityWorldReady) return;
-  cityWorldReady = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
   cityBuildingGrid = new Map();
   cityRoot = new THREE.Group();
@@ -2713,18 +2712,13 @@ function createOpenCityWorld() {
     const map = gltf.scene;
     map.name = 'SanFrancisco_City';
     map.updateMatrixWorld(true);
-    // Some city exporters label a Z-up scene as glTF/Y-up. Detect that case
-    // from the original footprint and convert it before scaling or spawning.
+    // GLB/glTF uses Y-up coordinates. Do not guess the axis from the
+    // building heights: tall buildings can fool that heuristic and turn the
+    // entire city onto its side.
     map.rotation.set(0, 0, 0);
+    map.updateMatrixWorld(true);
     let bounds = new THREE.Box3().setFromObject(map);
     let size = bounds.getSize(new THREE.Vector3());
-    if (size.z < size.y * 0.45 && size.y > size.x * 0.35) {
-      map.rotation.x = -Math.PI / 2;
-      map.updateMatrixWorld(true);
-      console.info('Converted Z-up city model to Y-up.');
-    }
-    bounds = new THREE.Box3().setFromObject(map);
-    size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
     const horizontalSize = Math.max(size.x, size.z);
     if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01) {
@@ -2734,30 +2728,46 @@ function createOpenCityWorld() {
     const mapScale = 1400 / horizontalSize;
     map.scale.setScalar(mapScale);
     map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
+    // Keep the imported textures, but use unlit materials for the huge city
+    // asset. This avoids expensive PBR lighting on thousands of city surfaces.
     map.traverse((object) => {
-      if (object.isMesh) {
-        object.castShadow = false;
-        object.receiveShadow = false;
-        object.frustumCulled = true;
-        if (object.material) {
-          const materials = Array.isArray(object.material) ? object.material : [object.material];
-          for (const mat of materials) {
-            if (mat) {
-              mat.side = THREE.DoubleSide;
-              mat.needsUpdate = true;
-            }
-          }
-        }
-      }
+      if (!object.isMesh) return;
+      object.castShadow = false;
+      object.receiveShadow = false;
+      object.frustumCulled = true;
+      const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
+      const fastMaterials = sourceMaterials.map((mat) => {
+        if (!mat) return new THREE.MeshBasicMaterial({ color: 0xcccccc });
+        return new THREE.MeshBasicMaterial({
+          map: mat.map || null,
+          alphaMap: mat.alphaMap || null,
+          color: 0xffffff,
+          vertexColors: !!mat.vertexColors,
+          transparent: !!mat.transparent,
+          opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
+          alphaTest: mat.alphaTest || 0,
+          side: THREE.FrontSide,
+          depthWrite: mat.depthWrite !== false
+        });
+      });
+      object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
     });
     cityRoot.add(map);
     buildCityCollisionGrid(map);
     citySpawnPosition.copy(findCityRoadsideSpawn(map));
-    console.info('Castelia City map loaded with simplified hitboxes.', {size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount});
+    cityWorldReady = true;
+    if (running && player) {
+      player.position.copy(citySpawnPosition);
+      player.rotation.set(0, 0, 0);
+      cityHeading = 0;
+      citySpeedMps = 0;
+    }
+    console.info('Castelia City loaded.', {size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount, meshes: map.children.length});
   }, (event) => {
     if (event.total) console.info('Loading San Francisco map:', Math.round(event.loaded / event.total * 100) + '%');
   }, (error) => {
-    console.error('Could not load SanFrancisco_City.glb:', error);
+    cityWorldReady = false;
+    console.error('Could not load Castelia City.glb:', error);
     const warning = document.createElement('div');
     warning.textContent = 'CITY MAP FAILED TO LOAD · CHECK THE GLB FILE';
     Object.assign(warning.style, {position:'fixed',top:'58px',left:'50%',transform:'translateX(-50%)',zIndex:'50',padding:'9px 13px',borderRadius:'7px',background:'rgba(90,20,20,.9)',color:'#fff',font:'700 12px Arial,sans-serif',pointerEvents:'none'});
