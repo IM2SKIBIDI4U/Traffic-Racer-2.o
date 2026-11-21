@@ -2589,161 +2589,52 @@ function createOpenCityWorld() {
   if (cityWorldReady) return;
   cityWorldReady = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
-  cityRoot = new THREE.Group();
   cityBuildingGrid = new Map();
-  cityRoot.name = 'open_city_world';
+  cityRoot = new THREE.Group();
+  cityRoot.name = 'san_francisco_city_map';
   scene.add(cityRoot);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(1700, 1700), material(0x53664e, 1));
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -0.18;
-  ground.receiveShadow = true;
-  cityRoot.add(ground);
-  const asphaltCity = material(0x303943, 0.96);
-  const sidewalkCity = material(0x858d8e, 0.95);
-  const laneCity = material(0xe4dfca, 0.85);
-  const facadeMats = [material(0x68727b,0.9),material(0x8a6253,0.9),material(0xb6a78d,0.9),material(0x354653,0.86),material(0x687d70,0.9)];
-  const glassCity = material(0x29495b,0.22,0.3);
-  // Seven-by-seven connected streets. Every horizontal/vertical crossing is
-  // a real open intersection, not a painted road prop.
-  for (let i=-7; i<=7; i++) {
-    const roadV = new THREE.Mesh(new THREE.BoxGeometry(22,0.16,1600),asphaltCity);
-    roadV.position.set(i*CITY_BLOCK,-0.045,0);
-    roadV.receiveShadow=true;
-    cityRoot.add(roadV);
-    const roadH = new THREE.Mesh(new THREE.BoxGeometry(1600,0.16,22),asphaltCity);
-    roadH.position.set(0,-0.045,i*CITY_BLOCK);
-    roadH.receiveShadow=true;
-    cityRoot.add(roadH);
-    for(let p=-7;p<=7;p++) {
-      for(const side of [-1,1]) {
-        const stripeV=new THREE.Mesh(new THREE.BoxGeometry(0.16,0.035,3.2),laneCity);
-        stripeV.position.set(i*CITY_BLOCK+side*5.4,0.055,p*CITY_BLOCK+10);
-        cityRoot.add(stripeV);
-        const stripeH=new THREE.Mesh(new THREE.BoxGeometry(3.2,0.035,0.16),laneCity);
-        stripeH.position.set(p*CITY_BLOCK+10,0.055,i*CITY_BLOCK+side*5.4);
-        cityRoot.add(stripeH);
+
+  // Load the user's San Francisco city map from Git LFS. The model is centered
+  // on the driving world and scaled to fit the existing city coordinate space.
+  const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/SanFrancisco_City.glb';
+  gltfLoader.load(mapUrl, (gltf) => {
+    const map = gltf.scene;
+    map.name = 'SanFrancisco_City';
+    map.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(map);
+    const size = bounds.getSize(new THREE.Vector3());
+    const center = bounds.getCenter(new THREE.Vector3());
+    const horizontalSize = Math.max(size.x, size.z);
+    if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01) {
+      console.error('SanFrancisco_City.glb has invalid dimensions.');
+      return;
+    }
+    const mapScale = 1400 / horizontalSize;
+    map.scale.setScalar(mapScale);
+    map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
+    map.traverse((object) => {
+      if (object.isMesh) {
+        object.castShadow = false;
+        object.receiveShadow = true;
+        if (object.material) {
+          const materials = Array.isArray(object.material) ? object.material : [object.material];
+          for (const mat of materials) {
+            if (mat) mat.side = THREE.DoubleSide;
+          }
+        }
       }
-    }
-  }
-  // Raised sidewalks, curbs and streetlights give the roads a finished
-  // modern-city streetscape while keeping the 22-unit carriageways clear.
-  const curbMat=material(0xb4b7b3,0.9);
-  const poleMat=material(0x303a40,0.72,0.25);
-  const lampMat=new THREE.MeshBasicMaterial({color:0xffe6b2});
-  for(let i=-7;i<=7;i++) {
-    for(const side of [-1,1]) {
-      const curbV=new THREE.Mesh(new THREE.BoxGeometry(1.1,0.28,1600),curbMat);
-      curbV.position.set(i*CITY_BLOCK+side*12.1,0.02,0);cityRoot.add(curbV);
-      const walkV=new THREE.Mesh(new THREE.BoxGeometry(3.0,0.22,1600),sidewalkCity);
-      walkV.position.set(i*CITY_BLOCK+side*14.0,-0.01,0);cityRoot.add(walkV);
-      const curbH=new THREE.Mesh(new THREE.BoxGeometry(1600,0.28,1.1),curbMat);
-      curbH.position.set(0,0.02,i*CITY_BLOCK+side*12.1);cityRoot.add(curbH);
-      const walkH=new THREE.Mesh(new THREE.BoxGeometry(1600,0.22,3.0),sidewalkCity);
-      walkH.position.set(0,-0.01,i*CITY_BLOCK+side*14.0);cityRoot.add(walkH);
-    }
-    if(i%4===0) for(let j=-7;j<=7;j+=2) for(const side of [-1,1]) {
-      const pole=new THREE.Group();
-      const stem=new THREE.Mesh(new THREE.CylinderGeometry(0.11,0.16,7,7),poleMat);
-      stem.position.y=3.5;pole.add(stem);
-      const arm=new THREE.Mesh(new THREE.BoxGeometry(1.5,0.12,0.12),poleMat);
-      arm.position.set(side*0.62,6.7,0);pole.add(arm);
-      const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.22,8,6),lampMat);
-      bulb.position.set(side*1.25,6.55,0);pole.add(bulb);
-      pole.position.set(j*CITY_BLOCK+side*15.8,0,i*CITY_BLOCK+16);
-      cityRoot.add(pole);
-    }
-  }
-  // Instanced facade windows add believable building detail with very few draw calls.
-  const cityWindowGeometry=new THREE.BoxGeometry(1.05,1.45,0.10);
-  const cityWindowInstances=[];
-  const cityWindowDummy=new THREE.Object3D();
-  // Buildings occupy the middle of each block with a varied downtown skyline.
-  for(let gx=-7;gx<7;gx++) for(let gz=-7;gz<7;gz++) {
-    const cx=(gx+0.5)*CITY_BLOCK, cz=(gz+0.5)*CITY_BLOCK;
-    const downtown=Math.max(0,1-Math.hypot(cx,cz)/520);
-    const count=2+Math.floor(Math.random()*3);
-    for(let n=0;n<count;n++) {
-      const w=7+Math.random()*9, d=7+Math.random()*9;
-      const towerChance=Math.random();
-      const h=towerChance<downtown*0.72?72+Math.random()*105: towerChance<0.55?38+Math.random()*42:12+Math.random()*28;
-      const b=new THREE.Group();
-      const facade=facadeMats[Math.floor(Math.random()*facadeMats.length)];
-      const shell=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),facade);
-      shell.position.y=h/2;
-      // Avoid thousands of shadow-casting objects; the city remains lit by
-      // the scene's ambient lighting and keeps rendering much lighter.
-      shell.castShadow=false;shell.receiveShadow=false;b.add(shell);
-      b.position.set(cx+(Math.random()-0.5)*31,0,cz+(Math.random()-0.5)*31);
-      cityRoot.add(b);
-      // Repeated floor-by-floor windows, slightly inset into the facade.
-      const columns=Math.max(2,Math.floor(w/2.1));
-      const floors=Math.max(2,Math.min(22,Math.floor(h/4.2)));
-      for(let floor=0;floor<floors;floor++) for(let col=0;col<columns;col++) {
-        cityWindowDummy.position.set(
-          b.position.x-w*0.5+(col+0.5)*(w/columns),
-          2.2+floor*4.0,
-          b.position.z+d*0.5+0.055
-        );
-        cityWindowDummy.scale.set(0.78,1,1);
-        cityWindowDummy.updateMatrix();
-        cityWindowInstances.push(cityWindowDummy.matrix.clone());
-      }
-      const key=gx+','+gz;
-      if(!cityBuildingGrid.has(key))cityBuildingGrid.set(key,[]);
-      cityBuildingGrid.get(key).push({x:b.position.x,z:b.position.z,halfW:w*0.5,halfD:d*0.5});
-    }
-    const plaza=new THREE.Mesh(new THREE.BoxGeometry(15,0.16,15),material(0x55734d,1));
-    plaza.position.set(cx,0.01,cz);cityRoot.add(plaza);
-    {
-      const tree=new THREE.Group();
-      const trunk=new THREE.Mesh(new THREE.CylinderGeometry(0.22,0.3,2.1,6),poleMat);
-      trunk.position.y=1.05;tree.add(trunk);
-      const crown=new THREE.Mesh(new THREE.SphereGeometry(1.65,7,6),facadeMats[4]);
-      crown.position.y=2.7;tree.add(crown);
-      tree.position.set(cx+5,0,cz+5);cityRoot.add(tree);
-    }
-  }
-  if(cityWindowInstances.length) {
-    const windows=new THREE.InstancedMesh(cityWindowGeometry,glassCity,cityWindowInstances.length);
-    for(let i=0;i<cityWindowInstances.length;i++)windows.setMatrixAt(i,cityWindowInstances[i]);
-    windows.instanceMatrix.needsUpdate=true;
-    windows.castShadow=false;windows.receiveShadow=false;
-    cityRoot.add(windows);
-  }
-  // Zebra crossings and stop bars at selected intersections add street detail.
-  const zebraGeo=new THREE.BoxGeometry(0.62,0.04,3.4);
-  const zebraMat=material(0xe4e5df,0.86);
-  const zebra=new THREE.InstancedMesh(zebraGeo,zebraMat,8*8*2*7*4);
-  const zebraDummy=new THREE.Object3D(); let zebraIndex=0;
-  for(let gx=-6;gx<=6;gx+=2) for(let gz=-6;gz<=6;gz+=2) {
-    const ix=gx*CITY_BLOCK, iz=gz*CITY_BLOCK;
-    for(let n=-3;n<=3;n++) {
-      zebraDummy.position.set(ix-7.2,0.075,iz+n*1.05); zebraDummy.rotation.y=Math.PI/2; zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
-      zebraDummy.position.set(ix+7.2,0.075,iz+n*1.05); zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
-      zebraDummy.position.set(ix+n*1.05,0.075,iz-7.2); zebraDummy.rotation.y=0; zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
-      zebraDummy.position.set(ix+n*1.05,0.075,iz+7.2); zebraDummy.updateMatrix(); zebra.setMatrixAt(zebraIndex++,zebraDummy.matrix);
-    }
-  }
-  zebra.count=zebraIndex; zebra.instanceMatrix.needsUpdate=true; cityRoot.add(zebra);
-  // Drag-race gates mark the central avenue start and finish.
-  const raceGateMat=material(0x293a45,0.55,0.25);
-  for(const z of [-520,-220]) {
-    const gate=new THREE.Group();
-    const left=new THREE.Mesh(new THREE.BoxGeometry(0.5,5,0.5),raceGateMat); left.position.set(-9,2.5,0);
-    const right=left.clone(); right.position.x=9;
-    const top=new THREE.Mesh(new THREE.BoxGeometry(18.5,0.5,0.5),raceGateMat); top.position.y=5;
-    gate.add(left,right,top); gate.position.z=z; cityRoot.add(gate);
-  }
-  // Mark the outer edge with simple barriers so the city feels bounded.
-  const wallMat=material(0x46525a,0.9);
-  for(const x of [-CITY_HALF-12,CITY_HALF+12]) {
-    const wall=new THREE.Mesh(new THREE.BoxGeometry(3,3,1600),wallMat);
-    wall.position.set(x,1.5,0);cityRoot.add(wall);
-  }
-  for(const z of [-CITY_HALF-12,CITY_HALF+12]) {
-    const wall=new THREE.Mesh(new THREE.BoxGeometry(1600,3,3),wallMat);
-    wall.position.set(0,1.5,z);cityRoot.add(wall);
-  }
+    });
+    cityRoot.add(map);
+    console.info('San Francisco city map loaded.', {size: size.toArray(), scale: mapScale});
+  }, (event) => {
+    if (event.total) console.info('Loading San Francisco map:', Math.round(event.loaded / event.total * 100) + '%');
+  }, (error) => {
+    console.error('Could not load SanFrancisco_City.glb:', error);
+    const warning = document.createElement('div');
+    warning.textContent = 'CITY MAP FAILED TO LOAD · CHECK THE GLB FILE';
+    Object.assign(warning.style, {position:'fixed',top:'58px',left:'50%',transform:'translateX(-50%)',zIndex:'50',padding:'9px 13px',borderRadius:'7px',background:'rgba(90,20,20,.9)',color:'#fff',font:'700 12px Arial,sans-serif',pointerEvents:'none'});
+    document.body.appendChild(warning);
+  });
 }
 function cityRoadPosition(position) {
   const gx=Math.round(position.x/CITY_BLOCK)*CITY_BLOCK;
