@@ -2718,6 +2718,9 @@ function cityIsWaterAt(x,z,groundY) {
   return waterY!==null&&(groundY===null||groundY<=waterY+0.25);
 }
 function cityGroundHeightAt(x, z) {
+  if(citySpawnRoadBounds&&x>=citySpawnRoadBounds.minX&&x<=citySpawnRoadBounds.maxX&&z>=citySpawnRoadBounds.minZ&&z<=citySpawnRoadBounds.maxZ) {
+    return citySpawnRoadBounds.topY;
+  }
   const meshes = cityGroundMeshesAt(x, z);
   if (!meshes.length) return null;
   const localWaterY=cityWaterHeightAt(x,z);
@@ -2753,7 +2756,7 @@ function createCitySpawnRoad(spawn) {
     edge.position.set(side*(width/2-0.35),0.11,0);
     group.add(edge);
   }
-  group.position.set(spawn.x,spawn.y+0.01,spawn.z);
+  group.position.set(spawn.x,spawn.y-0.21,spawn.z);
   cityRoot.add(group);
   citySpawnRoadPatch=group;
   citySpawnRoadBounds={minX:spawn.x-width/2,maxX:spawn.x+width/2,minZ:spawn.z-length/2,maxZ:spawn.z+length/2,topY:group.position.y+0.09};
@@ -2853,8 +2856,15 @@ function findCityRoadsideSpawn(root) {
   // The road simulation uses a 90-unit city grid. Keep the fallback in a
   // lane on the nearest road and above any mapped waterline.
   const x=3.8,z=0;
+  let fallbackX=x;
+  for(let offset=0;offset<=6;offset++) {
+    for(const candidateX of [x+offset*CITY_BLOCK,x-offset*CITY_BLOCK]) {
+      if(!cityPositionBlocked(candidateX,z,cityGroundFloorY+0.65)){fallbackX=candidateX;break;}
+    }
+    if(fallbackX!==x||!cityPositionBlocked(x,z,cityGroundFloorY+0.65))break;
+  }
   console.warn('No mapped road surface was raycastable; using the nearest city road lane.');
-  return new THREE.Vector3(x,citySafeGroundY(x,z),z);
+  return new THREE.Vector3(fallbackX,citySafeGroundY(fallbackX,z),z);
 }
 
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
