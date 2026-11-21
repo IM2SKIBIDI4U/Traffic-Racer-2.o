@@ -1488,7 +1488,7 @@ for(const kit of cityRepairPickups)scene.remove(kit);
 cityRepairPickups.length=0;
 takedownCharge = 0;
 if (cityWorldReady) {
-  player.position.set(0,0,0);
+  player.position.copy(citySpawnPosition);
   player.rotation.set(0,0,0);
   for (const bot of cityTraffic) scene.remove(bot.mesh);
   for (const cop of cityPolice) scene.remove(cop.mesh);
@@ -1504,7 +1504,7 @@ cameraShake = 0;
 nearMissChain = 0;
 playerLateral = lanes.at(2);
 if (cityWorldReady) {
-  player.position.set(0, 0, 0);
+  player.position.copy(citySpawnPosition);
   player.rotation.set(0, 0, 0);
 } else {
   placeOnRoad(player, playerLateral, 7);
@@ -2590,6 +2590,7 @@ function updateTraffic(dt, previousPlayer) {
 const CITY_COLLISION_CELL = 24;
 let cityCollisionGrid = new Map();
 let cityCollisionCount = 0;
+let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
@@ -2629,6 +2630,61 @@ function buildCityCollisionGrid(root) {
   });
   console.info('Generated simplified city hitboxes:', cityCollisionCount);
 }
+function findCityRoadsideSpawn(root) {
+  root.updateMatrixWorld(true);
+  const meshes = [];
+  root.traverse((object) => {
+    if (object.isMesh && object.geometry) meshes.push(object);
+  });
+  if (!meshes.length) return new THREE.Vector3(0, 0, 0);
+  const raycaster = new THREE.Raycaster();
+  raycaster.firstHitOnly = true;
+  const origin = new THREE.Vector3();
+  const down = new THREE.Vector3(0, -1, 0);
+  const normalMatrix = new THREE.Matrix3();
+  let best = null;
+  let bestScore = Infinity;
+  // Search around the map centre for a flat drivable surface beside a building.
+  for (let x = -180; x <= 180; x += 8) {
+    for (let z = -180; z <= 180; z += 8) {
+      origin.set(x, 260, z);
+      raycaster.set(origin, down);
+      raycaster.far = 520;
+      const hits = raycaster.intersectObjects(meshes, false);
+      if (!hits.length) continue;
+      const hit = hits[0];
+      if (!hit.face) continue;
+      normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+      const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+      if (normal.y < 0.88) continue;
+      if (hit.point.y < -1 || hit.point.y > 12) continue;
+      if (cityPositionBlocked(x, z)) continue;
+      // Prefer a nearby building edge without spawning inside its hitbox.
+      let nearestBuilding = Infinity;
+      for (const bucket of cityCollisionGrid.values()) {
+        for (const box of bucket) {
+          const dx = Math.max(box.minX - x, 0, x - box.maxX);
+          const dz = Math.max(box.minZ - z, 0, z - box.maxZ);
+          const distance = Math.hypot(dx, dz);
+          if (distance > 0 && distance < nearestBuilding) nearestBuilding = distance;
+        }
+      }
+      if (nearestBuilding < 5 || nearestBuilding > 32) continue;
+      const score = Math.hypot(x, z) + Math.abs(nearestBuilding - 12) * 1.5;
+      if (score < bestScore) {
+        bestScore = score;
+        best = new THREE.Vector3(x, Math.max(0, hit.point.y), z);
+      }
+    }
+  }
+  if (best) {
+    console.info('Selected roadside player spawn:', best.toArray());
+    return best;
+  }
+  console.warn('No clear roadside spawn found; using map centre.');
+  return new THREE.Vector3(0, 0, 0);
+}
+
 function cityPositionBlocked(x, z) {
   const cellX = Math.floor(x / CITY_COLLISION_CELL);
   const cellZ = Math.floor(z / CITY_COLLISION_CELL);
@@ -2706,6 +2762,7 @@ function createOpenCityWorld() {
     });
     cityRoot.add(map);
     buildCityCollisionGrid(map);
+    citySpawnPosition.copy(findCityRoadsideSpawn(map));
     console.info('Castelia City map loaded with simplified hitboxes.', {size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount});
   }, (event) => {
     if (event.total) console.info('Loading San Francisco map:', Math.round(event.loaded / event.total * 100) + '%');
