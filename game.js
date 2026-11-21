@@ -2622,8 +2622,11 @@ function buildCityCollisionGrid(root) {
     bounds.getSize(size);
     const name = (object.name || '').toLowerCase();
     const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(name);
-    if (namedWater) cityWaterLevelY = Math.max(cityWaterLevelY, bounds.max.y);
     const namedGround = !namedWater && /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(name);
+    const wideFlatSurface = size.y <= 1.25 && Math.max(size.x, size.z) > 160;
+    if (namedWater || (wideFlatSurface && !namedGround)) {
+      cityWaterLevelY = Math.max(cityWaterLevelY, bounds.max.y);
+    }
     // Do not treat full-map planes or water meshes as roads. Named terrain
     // remains eligible even when it spans most of the map.
     const broadSurface = !namedWater && size.y <= 1.25 && size.x >= 2 && size.z >= 2 &&
@@ -2688,7 +2691,7 @@ function cityGroundHeightAt(x, z) {
     normalMatrix.getNormalMatrix(hit.object.matrixWorld);
     const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
     if (normal.y < 0.88) continue;
-    if (Number.isFinite(cityWaterLevelY) && Math.abs(hit.point.y - cityWaterLevelY) < 0.25) continue;
+    if (Number.isFinite(cityWaterLevelY) && hit.point.y <= cityWaterLevelY + 0.25) continue;
     if (cityPositionBlocked(x, z, hit.point.y)) continue;
     return hit.point.y;
   }
