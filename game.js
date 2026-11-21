@@ -2593,6 +2593,7 @@ let cityCollisionGrid = new Map();
 let cityCollisionCount = 0;
 let cityGroundGrid = new Map();
 let cityLargeGroundMeshes = [];
+let cityRoadCandidates = [];
 let cityWaterGrid = new Map();
 let cityLargeWaterRegions = [];
 let cityGroundFloorY = 0;
@@ -2600,8 +2601,6 @@ let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
 let cityRespawnPending = false;
 let cityRespawnScreen = null;
-let citySpawnRoadPatch = null;
-let citySpawnRoadBounds = null;
 const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
@@ -2610,6 +2609,7 @@ function buildCityCollisionGrid(root) {
   cityBuildingGrid.clear();
   cityGroundGrid.clear();
   cityLargeGroundMeshes = [];
+  cityRoadCandidates = [];
   cityWaterGrid.clear();
   cityLargeWaterRegions = [];
   root.updateMatrixWorld(true);
@@ -2640,6 +2640,21 @@ function buildCityCollisionGrid(root) {
       const cellCount=(maxX-minX+1)*(maxZ-minZ+1);
       if(cellCount>900)cityLargeWaterRegions.push(region);
       else for(let x=minX;x<=maxX;x++)for(let z=minZ;z<=maxZ;z++)addCell(cityWaterGrid,x+','+z,region);
+    }
+    const namedRoad=!namedWater&&/(road|street|asphalt|pavement|roadway)/.test(name);
+    const shortSide=Math.min(size.x,size.z),longSide=Math.max(size.x,size.z);
+    const roadLikeSurface=!waterSurface&&size.y<=1.25&&shortSide>=6&&shortSide<=40&&longSide>=30&&longSide/shortSide>=1.7;
+    if(namedRoad||roadLikeSurface) {
+      const alongX=size.x>=size.z;
+      const centerX=(bounds.min.x+bounds.max.x)/2,centerZ=(bounds.min.z+bounds.max.z)/2;
+      const low=alongX?bounds.min.x:bounds.min.z,high=alongX?bounds.max.x:bounds.max.z;
+      const step=Math.max(20,Math.min(45,longSide/4));
+      let added=false;
+      for(let along=low+Math.min(step/2,longSide/2);along<high;along+=step) {
+        cityRoadCandidates.push({x:alongX?along:centerX,z:alongX?centerZ:along,fallbackY:bounds.max.y,mesh:object});
+        added=true;
+      }
+      if(!added)cityRoadCandidates.push({x:centerX,z:centerZ,fallbackY:bounds.max.y,mesh:object});
     }
     // Do not treat full-map planes or water meshes as roads. Named terrain
     // remains eligible even when it spans most of the map.
@@ -2718,9 +2733,6 @@ function cityIsWaterAt(x,z,groundY) {
   return waterY!==null&&(groundY===null||groundY<=waterY+0.25);
 }
 function cityGroundHeightAt(x, z) {
-  if(citySpawnRoadBounds&&x>=citySpawnRoadBounds.minX&&x<=citySpawnRoadBounds.maxX&&z>=citySpawnRoadBounds.minZ&&z<=citySpawnRoadBounds.maxZ) {
-    return citySpawnRoadBounds.topY;
-  }
   const meshes = cityGroundMeshesAt(x, z);
   if (!meshes.length) return null;
   const localWaterY=cityWaterHeightAt(x,z);
@@ -2740,23 +2752,6 @@ function cityGroundHeightAt(x, z) {
     return hit.point.y;
   }
   return null;
-}
-function createCitySpawnRoad(spawn) {
-  if(citySpawnRoadPatch)cityRoot.remove(citySpawnRoadPatch);
-  const group=new THREE.Group();
-  const length=220,width=18;
-  const slab=new THREE.Mesh(new THREE.BoxGeometry(width,0.18,length),roadMat);
-  slab.position.y=0;
-  group.add(slab);
-  for(const side of [-1,1]) {
-    const edge=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.04,length),whiteLine);
-    edge.position.set(side*(width/2-0.35),0.11,0);
-    group.add(edge);
-  }
-  group.position.set(spawn.x,spawn.y-0.21,spawn.z);
-  cityRoot.add(group);
-  citySpawnRoadPatch=group;
-  citySpawnRoadBounds={minX:spawn.x-width/2,maxX:spawn.x+width/2,minZ:spawn.z-length/2,maxZ:spawn.z+length/2,topY:group.position.y+0.09};
 }
 function citySafeGroundY(x, z) {
   const surfaceY=cityGroundHeightAt(x,z);
@@ -2822,48 +2817,66 @@ function respawnCityPlayer() {
   const toast=$('near-miss');
   if(toast){toast.textContent='WATER · RESPAWNED';toast.classList.add('show');}
 }
+function cityRoadHeightAt(candidate) {
+  const waterY=cityWaterHeightAt(candidate.x,candidate.z);
+  cityGroundRaycaster.ray.origin.set(candidate.x,cityGroundCeilingY+10,candidate.z);
+  cityGroundRaycaster.ray.direction.set(0,-1,0);
+  cityGroundRaycaster.near=0;
+  cityGroundRaycaster.far=Math.max(20,cityGroundCeilingY-cityGroundFloorY+20);
+  const hits=cityGroundRaycaster.intersectObject(candidate.mesh,false);
+  const normalMatrix=new THREE.Matrix3();
+  for(const hit of hits) {
+    if(!hit.face||hit.point.y<cityGroundFloorY-0.5)continue;
+    normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+    const normal=hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+    if(normal.y<0.88)continue;
+    if(waterY!==null&&hit.point.y<=waterY+0.25)continue;
+    if(cityPositionBlocked(candidate.x,candidate.z,hit.point.y))continue;
+    return hit.point.y;
+  }
+  if(waterY!==null&&candidate.fallbackY<=waterY+0.25)return null;
+  if(cityPositionBlocked(candidate.x,candidate.z,candidate.fallbackY))return null;
+  return candidate.fallbackY;
+}
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
+  const roads=[...cityRoadCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
+  for(const road of roads) {
+    const groundY=cityRoadHeightAt(road);
+    if(groundY===null||groundY< -1||groundY>30)continue;
+    const spawn=new THREE.Vector3(road.x,groundY+0.12,road.z);
+    console.info('Selected spawn on a road mesh:',spawn.toArray(),road.mesh.name);
+    return spawn;
+  }
+  // Some GLBs merge street surfaces into unnamed terrain meshes. Sample those
+  // map surfaces along the city grid as a fallback, but never create a road.
   const candidates=[];
-  const seen=new Set();
-  const laneOffsets=[-3.8,0,3.8];
   for(let block=-6;block<=6;block++) {
-    const roadLine=block*CITY_BLOCK;
+    const line=block*CITY_BLOCK;
     for(let along=-600;along<=600;along+=30) {
-      for(const lane of laneOffsets) {
-        const points=[[roadLine+lane,along],[along,roadLine+lane]];
-        for(const [x,z] of points) {
-          const key=Math.round(x*10)+','+Math.round(z*10);
-          if(seen.has(key))continue;
-          seen.add(key);
-          candidates.push({x,z,score:Math.hypot(x,z)});
-        }
+      for(const lane of [-3.8,0,3.8]) {
+        candidates.push({x:line+lane,z:along});
+        candidates.push({x:along,z:line+lane});
       }
     }
   }
-  candidates.sort((a,b)=>a.score-b.score);
-  // Probe actual surfaces only at city road lanes, nearest roads first.
+  candidates.sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
   for(const point of candidates) {
     const groundY=cityGroundHeightAt(point.x,point.z);
-    if(groundY===null||groundY< -1||groundY>30)continue;
-    const spawn=new THREE.Vector3(point.x,groundY+0.12,point.z);
-    console.info('Selected city road spawn:',spawn.toArray());
-    return spawn;
+    if(groundY!==null&&groundY>=-1&&groundY<=30)return new THREE.Vector3(point.x,groundY+0.12,point.z);
   }
-  // The road simulation uses a 90-unit city grid. Keep the fallback in a
-  // lane on the nearest road and above any mapped waterline.
-  const x=3.8,z=0;
-  let fallbackX=x;
-  for(let offset=0;offset<=6;offset++) {
-    for(const candidateX of [x+offset*CITY_BLOCK,x-offset*CITY_BLOCK]) {
-      if(!cityPositionBlocked(candidateX,z,cityGroundFloorY+0.65)){fallbackX=candidateX;break;}
-    }
-    if(fallbackX!==x||!cityPositionBlocked(x,z,cityGroundFloorY+0.65))break;
+  console.warn('The city model has no raycastable road surface near the start.');
+  const dryCells=[...cityGroundGrid.keys()].map(key=>{
+    const [cx,cz]=key.split(',').map(Number);
+    const x=cx*CITY_GROUND_CELL+CITY_GROUND_CELL/2,z=cz*CITY_GROUND_CELL+CITY_GROUND_CELL/2;
+    return {x,z,score:Math.hypot(x,z)};
+  }).sort((a,b)=>a.score-b.score);
+  for(const point of dryCells) {
+    const groundY=cityGroundHeightAt(point.x,point.z);
+    if(groundY!==null&&groundY>=-1&&groundY<=30)return new THREE.Vector3(point.x,groundY+0.12,point.z);
   }
-  console.warn('No mapped road surface was raycastable; using the nearest city road lane.');
-  return new THREE.Vector3(fallbackX,citySafeGroundY(fallbackX,z),z);
+  return new THREE.Vector3(0,Math.max(0.65,cityGroundFloorY+0.65),0);
 }
-
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
   const cellX = Math.floor(x / CITY_COLLISION_CELL);
   const cellZ = Math.floor(z / CITY_COLLISION_CELL);
@@ -2947,7 +2960,6 @@ function createOpenCityWorld() {
     cityRoot.add(map);
     buildCityCollisionGrid(map);
     citySpawnPosition.copy(findCityRoadsideSpawn(map));
-    createCitySpawnRoad(citySpawnPosition);
     cityWorldReady = true;
     if (running && player) {
       player.position.copy(citySpawnPosition);
