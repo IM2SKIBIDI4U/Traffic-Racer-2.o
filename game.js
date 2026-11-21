@@ -24,7 +24,7 @@ try {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.15));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.85));
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2637,55 +2637,47 @@ function findCityRoadsideSpawn(root) {
     if (object.isMesh && object.geometry) meshes.push(object);
   });
   if (!meshes.length) return new THREE.Vector3(0, 0, 0);
+  const mapBounds = new THREE.Box3().setFromObject(root);
+  const mapSize = mapBounds.getSize(new THREE.Vector3());
   const raycaster = new THREE.Raycaster();
-  raycaster.firstHitOnly = true;
   const origin = new THREE.Vector3();
   const down = new THREE.Vector3(0, -1, 0);
   const normalMatrix = new THREE.Matrix3();
   let best = null;
   let bestScore = Infinity;
-  // Search around the map centre for a flat drivable surface beside a building.
-  for (let x = -180; x <= 180; x += 8) {
-    for (let z = -180; z <= 180; z += 8) {
-      origin.set(x, 260, z);
+  // Only test a small local grid. The old 2,116 full-city raycasts caused
+  // a major loading freeze on large city GLBs.
+  const rayStartY = mapBounds.max.y + 10;
+  raycaster.far = mapSize.y + 30;
+  for (let x = -40; x <= 40; x += 10) {
+    for (let z = -40; z <= 40; z += 10) {
+      origin.set(x, rayStartY, z);
       raycaster.set(origin, down);
-      raycaster.far = 520;
       const hits = raycaster.intersectObjects(meshes, false);
-      if (!hits.length) continue;
-      const hit = hits[0];
-      if (!hit.face) continue;
-      normalMatrix.getNormalMatrix(hit.object.matrixWorld);
-      const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
-      if (normal.y < 0.88) continue;
-      if (hit.point.y < -1 || hit.point.y > 12) continue;
-      if (cityPositionBlocked(x, z)) continue;
-      // Prefer a nearby building edge without spawning inside its hitbox.
-      let nearestBuilding = Infinity;
-      for (const bucket of cityCollisionGrid.values()) {
-        for (const box of bucket) {
-          const dx = Math.max(box.minX - x, 0, x - box.maxX);
-          const dz = Math.max(box.minZ - z, 0, z - box.maxZ);
-          const distance = Math.hypot(dx, dz);
-          if (distance > 0 && distance < nearestBuilding) nearestBuilding = distance;
+      for (const hit of hits) {
+        if (!hit.face || hit.point.y < -1 || hit.point.y > 12) continue;
+        normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+        const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+        if (Math.abs(normal.y) < 0.88) continue;
+        if (cityPositionBlocked(x, z, hit.point.y)) continue;
+        const score = Math.hypot(x, z);
+        if (score < bestScore) {
+          bestScore = score;
+          best = new THREE.Vector3(x, Math.max(0, hit.point.y), z);
         }
-      }
-      if (nearestBuilding < 5 || nearestBuilding > 32) continue;
-      const score = Math.hypot(x, z) + Math.abs(nearestBuilding - 12) * 1.5;
-      if (score < bestScore) {
-        bestScore = score;
-        best = new THREE.Vector3(x, Math.max(0, hit.point.y), z);
+        break;
       }
     }
   }
   if (best) {
-    console.info('Selected roadside player spawn:', best.toArray());
+    console.info('Selected clear roadside spawn:', best.toArray());
     return best;
   }
-  console.warn('No clear roadside spawn found; using map centre.');
+  console.warn('No clear road surface found near the map centre; using a low fallback spawn.');
   return new THREE.Vector3(0, 0, 0);
 }
 
-function cityPositionBlocked(x, z) {
+function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
   const cellX = Math.floor(x / CITY_COLLISION_CELL);
   const cellZ = Math.floor(z / CITY_COLLISION_CELL);
   const radius = 2.2;
@@ -2696,7 +2688,7 @@ function cityPositionBlocked(x, z) {
       const bucket = cityCollisionGrid.get(gx + ',' + gz);
       if (!bucket) continue;
       for (const box of bucket) {
-        if (box.maxY < carMinY || box.minY > carMaxY) continue;
+        if (box.maxY < groundY + carMinY || box.minY > groundY + carMaxY) continue;
         if (x + radius > box.minX && x - radius < box.maxX &&
             z + radius > box.minZ && z - radius < box.maxZ) return true;
       }
@@ -2721,18 +2713,10 @@ function createOpenCityWorld() {
     const map = gltf.scene;
     map.name = 'SanFrancisco_City';
     map.updateMatrixWorld(true);
-    // Some city exports use Z-up instead of the GLTF Y-up convention. Detect
-    // that layout before scaling so the streets are upright in the driving world.
-    const initialBounds = new THREE.Box3().setFromObject(map);
-    const initialSize = initialBounds.getSize(new THREE.Vector3());
-    if (initialSize.y > initialSize.z * 1.5 && initialSize.x > initialSize.z * 1.5) {
-      map.rotation.x = -Math.PI / 2;
-      map.updateMatrixWorld(true);
-      console.info('Detected Z-up city model; corrected its orientation.');
-    }
-    // Do not flip the model upside down. GLB files using the standard
-    // glTF Y-up convention should remain upright; only the Z-up correction
-    // above is applied when the model's dimensions indicate that export.
+    // GLB/glTF scenes are Y-up by specification. Do not auto-rotate based
+    // on bounding-box proportions: city footprints can trigger false positives.
+    map.rotation.set(0, 0, 0);
+    map.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(map);
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
@@ -3014,7 +2998,7 @@ function updateOpenCity(dt,stats) {
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
-  player.position.y=0;
+  player.position.y=citySpawnPosition.y;
   // Keep the player inside the connected city limits.
   player.position.x=THREE.MathUtils.clamp(player.position.x,-CITY_HALF+14,CITY_HALF-14);
   player.position.z=THREE.MathUtils.clamp(player.position.z,-CITY_HALF+14,CITY_HALF-14);
@@ -3149,8 +3133,13 @@ function updateOpenCity(dt,stats) {
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
   camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
   camera.updateProjectionMatrix();
-  // Use the shared camera-mode controller in every driving mode.
-  applyCameraMode(camera,player,dt,1);
+  // Keep the city camera upright and behind the car regardless of a saved
+  // highway/overhead camera preset.
+  const cityCameraPosition = player.localToWorld(new THREE.Vector3(0, 5.2, -10));
+  const cityCameraTarget = player.localToWorld(new THREE.Vector3(0, 1.1, 16));
+  camera.position.lerp(cityCameraPosition, 1 - Math.exp(-7 * dt));
+  camera.up.set(0, 1, 0);
+  camera.lookAt(cityCameraTarget);
   cameraShake=THREE.MathUtils.damp(cameraShake,0,7,dt);
   if(cameraShake>0.01){camera.position.x+=Math.sin(performance.now()*0.03)*cameraShake*0.12;}
   updateProgression();
