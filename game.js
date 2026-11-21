@@ -2597,7 +2597,6 @@ let cityWaterGrid = new Map();
 let cityLargeWaterRegions = [];
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
-let cityWaterLevelY = -Infinity;
 let cityRespawnCooldown = 0;
 const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
@@ -2609,7 +2608,6 @@ function buildCityCollisionGrid(root) {
   cityLargeGroundMeshes = [];
   cityWaterGrid.clear();
   cityLargeWaterRegions = [];
-  cityWaterLevelY = -Infinity;
   root.updateMatrixWorld(true);
   const worldBounds = new THREE.Box3().setFromObject(root);
   cityGroundFloorY = worldBounds.min.y;
@@ -2632,7 +2630,6 @@ function buildCityCollisionGrid(root) {
     const wideFlatSurface = size.y <= 1.25 && Math.max(size.x, size.z) > 160;
     const waterSurface = namedWater || (wideFlatSurface && !namedGround);
     if (waterSurface) {
-      cityWaterLevelY = Math.max(cityWaterLevelY, bounds.max.y);
       const region = {minX:bounds.min.x,maxX:bounds.max.x,minZ:bounds.min.z,maxZ:bounds.max.z,waterY:bounds.max.y};
       const minX=Math.floor(region.minX/CITY_GROUND_CELL),maxX=Math.floor(region.maxX/CITY_GROUND_CELL);
       const minZ=Math.floor(region.minZ/CITY_GROUND_CELL),maxZ=Math.floor(region.maxZ/CITY_GROUND_CELL);
