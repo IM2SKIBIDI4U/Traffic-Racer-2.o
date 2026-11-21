@@ -2648,7 +2648,7 @@ function buildCityCollisionGrid(root) {
     // Building hitboxes are simplified AABBs. Road and terrain meshes are
     // handled by the ground-height sampler instead.
     if (size.y < 1.25 || size.x < 0.8 || size.z < 0.8) return;
-    if (size.x > 90 || size.z > 90 || size.y > 180) return;
+    if (size.x > 160 || size.z > 160 || size.y > 240) return;
     const collider = {
       minX: bounds.min.x, maxX: bounds.max.x,
       minY: bounds.min.y, maxY: bounds.max.y,
