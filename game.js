@@ -2585,6 +2585,70 @@ function updateTraffic(dt, previousPlayer) {
 // --- Open city driving world -------------------------------------------------
 // The legacy scrolling highway remains available as a fallback, but the escape
 // mode now runs on a real world-space street grid.
+// Build lightweight, invisible box colliders from individual GLB meshes.
+// A spatial hash keeps collision checks local instead of scanning the whole city.
+const CITY_COLLISION_CELL = 24;
+let cityCollisionGrid = new Map();
+let cityCollisionCount = 0;
+function buildCityCollisionGrid(root) {
+  cityCollisionGrid.clear();
+  cityCollisionCount = 0;
+  root.updateMatrixWorld(true);
+  const bounds = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  const addToCell = (key, collider) => {
+    let bucket = cityCollisionGrid.get(key);
+    if (!bucket) cityCollisionGrid.set(key, bucket = []);
+    bucket.push(collider);
+  };
+  root.traverse((object) => {
+    if (!object.isMesh || !object.geometry) return;
+    bounds.setFromObject(object);
+    if (bounds.isEmpty()) return;
+    bounds.getSize(size);
+    bounds.getCenter(center);
+    // Ignore terrain slabs, road surfaces, tiny props and giant combined meshes.
+    if (size.y < 1.25 || size.x < 0.8 || size.z < 0.8) return;
+    if (size.x > 90 || size.z > 90 || size.y > 180) return;
+    const collider = {
+      minX: bounds.min.x, maxX: bounds.max.x,
+      minY: bounds.min.y, maxY: bounds.max.y,
+      minZ: bounds.min.z, maxZ: bounds.max.z
+    };
+    const minCellX = Math.floor(collider.minX / CITY_COLLISION_CELL);
+    const maxCellX = Math.floor(collider.maxX / CITY_COLLISION_CELL);
+    const minCellZ = Math.floor(collider.minZ / CITY_COLLISION_CELL);
+    const maxCellZ = Math.floor(collider.maxZ / CITY_COLLISION_CELL);
+    for (let x = minCellX; x <= maxCellX; x++) {
+      for (let z = minCellZ; z <= maxCellZ; z++) {
+        addToCell(x + ',' + z, collider);
+      }
+    }
+    cityCollisionCount++;
+  });
+  console.info('Generated simplified city hitboxes:', cityCollisionCount);
+}
+function cityPositionBlocked(x, z) {
+  const cellX = Math.floor(x / CITY_COLLISION_CELL);
+  const cellZ = Math.floor(z / CITY_COLLISION_CELL);
+  const radius = 2.2;
+  const carMinY = 0.15;
+  const carMaxY = 2.4;
+  for (let gx = cellX - 1; gx <= cellX + 1; gx++) {
+    for (let gz = cellZ - 1; gz <= cellZ + 1; gz++) {
+      const bucket = cityCollisionGrid.get(gx + ',' + gz);
+      if (!bucket) continue;
+      for (const box of bucket) {
+        if (box.maxY < carMinY || box.minY > carMaxY) continue;
+        if (x + radius > box.minX && x - radius < box.maxX &&
+            z + radius > box.minZ && z - radius < box.maxZ) return true;
+      }
+    }
+  }
+  return false;
+}
+
 function createOpenCityWorld() {
   if (cityWorldReady) return;
   cityWorldReady = true;
@@ -2642,7 +2706,8 @@ function createOpenCityWorld() {
       }
     });
     cityRoot.add(map);
-    console.info('San Francisco city map loaded.', {size: size.toArray(), scale: mapScale});
+    buildCityCollisionGrid(map);
+    console.info('Castelia City map loaded with simplified hitboxes.', {size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount});
   }, (event) => {
     if (event.total) console.info('Loading San Francisco map:', Math.round(event.loaded / event.total * 100) + '%');
   }, (error) => {
@@ -2900,6 +2965,12 @@ function updateOpenCity(dt,stats) {
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
   const lateralSpeed=steer*citySpeedMps*0.12*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
+  // Stop the car at building hitboxes and reduce speed on impact.
+  if (cityCollisionCount && cityPositionBlocked(player.position.x, player.position.z)) {
+    player.position.x = oldPosition.x;
+    player.position.z = oldPosition.z;
+    citySpeedMps *= -0.16;
+  }
   player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*0.09,4,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
   actualSpeed=Math.abs(citySpeedMps)*3.6;
