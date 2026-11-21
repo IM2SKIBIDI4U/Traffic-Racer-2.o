@@ -2628,9 +2628,14 @@ function buildCityCollisionGrid(root) {
     bounds.setFromObject(object);
     if (bounds.isEmpty()) return;
     bounds.getSize(size);
-    const name = (object.name || '').toLowerCase();
-    const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(name);
-    const namedGround = !namedWater && /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(name);
+    const names = [object.name || ''];
+    for (let parent = object.parent; parent; parent = parent.parent) names.push(parent.name || '');
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) if (material) names.push(material.name || '');
+    const surfaceTags = names.join(' ').toLowerCase();
+    const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(surfaceTags);
+    const terrainSurface = /terrain/.test(surfaceTags);
+    const namedGround = !namedWater && /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(surfaceTags);
     const wideFlatSurface = size.y <= 1.25 && Math.max(size.x, size.z) > 160;
     const waterSurface = namedWater || (wideFlatSurface && !namedGround);
     if (waterSurface) {
@@ -2641,10 +2646,20 @@ function buildCityCollisionGrid(root) {
       if(cellCount>900)cityLargeWaterRegions.push(region);
       else for(let x=minX;x<=maxX;x++)for(let z=minZ;z<=maxZ;z++)addCell(cityWaterGrid,x+','+z,region);
     }
-    const namedRoad=!namedWater&&/(road|street|asphalt|pavement|roadway)/.test(name);
+    const namedRoad=!namedWater&&/(road|street|asphalt|pavement|roadway)/.test(surfaceTags);
     const shortSide=Math.min(size.x,size.z),longSide=Math.max(size.x,size.z);
     const roadLikeSurface=!waterSurface&&size.y<=1.25&&shortSide>=6&&shortSide<=40&&longSide>=30&&longSide/shortSide>=1.7;
-    if(namedRoad||roadLikeSurface) {
+    if(terrainSurface&&!waterSurface) {
+      // This GLB stores the roads in generic Terrain material meshes, not in
+      // separately named road objects. Sample those real mesh surfaces on a
+      // coarse grid so spawn selection never needs to invent road geometry.
+      const step=18;
+      for(let x=bounds.min.x+step/2;x<bounds.max.x;x+=step) {
+        for(let z=bounds.min.z+step/2;z<bounds.max.z;z+=step) {
+          cityRoadCandidates.push({x,z,fallbackY:bounds.max.y,mesh:object,terrain:true});
+        }
+      }
+    } else if(namedRoad||roadLikeSurface) {
       const alongX=size.x>=size.z;
       const centerX=(bounds.min.x+bounds.max.x)/2,centerZ=(bounds.min.z+bounds.max.z)/2;
       const low=alongX?bounds.min.x:bounds.min.z,high=alongX?bounds.max.x:bounds.max.z;
@@ -2666,7 +2681,7 @@ function buildCityCollisionGrid(root) {
       const minZ = Math.floor(bounds.min.z / CITY_GROUND_CELL);
       const maxZ = Math.floor(bounds.max.z / CITY_GROUND_CELL);
       const cellCount = (maxX - minX + 1) * (maxZ - minZ + 1);
-      if (cellCount > 900) cityLargeGroundMeshes.push(object);
+      if (cellCount > 900 && !terrainSurface) cityLargeGroundMeshes.push(object);
       else {
         for (let x = minX; x <= maxX; x++) {
           for (let z = minZ; z <= maxZ; z++) addCell(cityGroundGrid, x + ',' + z, object);
@@ -2834,6 +2849,7 @@ function cityRoadHeightAt(candidate) {
     if(cityPositionBlocked(candidate.x,candidate.z,hit.point.y))continue;
     return hit.point.y;
   }
+  if(candidate.terrain)return null;
   if(waterY!==null&&candidate.fallbackY<=waterY+0.25)return null;
   if(cityPositionBlocked(candidate.x,candidate.z,candidate.fallbackY))return null;
   return candidate.fallbackY;
@@ -2843,7 +2859,7 @@ function findCityRoadsideSpawn(root) {
   const roads=[...cityRoadCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
   for(const road of roads) {
     const groundY=cityRoadHeightAt(road);
-    if(groundY===null||groundY< -1||groundY>30)continue;
+    if(groundY===null||groundY<cityGroundFloorY-0.5||groundY>cityGroundCeilingY+0.5)continue;
     const spawn=new THREE.Vector3(road.x,groundY+0.12,road.z);
     console.info('Selected spawn on a road mesh:',spawn.toArray(),road.mesh.name);
     return spawn;
@@ -2863,7 +2879,7 @@ function findCityRoadsideSpawn(root) {
   candidates.sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
   for(const point of candidates) {
     const groundY=cityGroundHeightAt(point.x,point.z);
-    if(groundY!==null&&groundY>=-1&&groundY<=30)return new THREE.Vector3(point.x,groundY+0.12,point.z);
+    if(groundY!==null&&groundY>=cityGroundFloorY-0.5&&groundY<=cityGroundCeilingY+0.5)return new THREE.Vector3(point.x,groundY+0.12,point.z);
   }
   console.warn('The city model has no raycastable road surface near the start.');
   const dryCells=[...cityGroundGrid.keys()].map(key=>{
@@ -2873,7 +2889,7 @@ function findCityRoadsideSpawn(root) {
   }).sort((a,b)=>a.score-b.score);
   for(const point of dryCells) {
     const groundY=cityGroundHeightAt(point.x,point.z);
-    if(groundY!==null&&groundY>=-1&&groundY<=30)return new THREE.Vector3(point.x,groundY+0.12,point.z);
+    if(groundY!==null&&groundY>=cityGroundFloorY-0.5&&groundY<=cityGroundCeilingY+0.5)return new THREE.Vector3(point.x,groundY+0.12,point.z);
   }
   return new THREE.Vector3(0,Math.max(0.65,cityGroundFloorY+0.65),0);
 }
