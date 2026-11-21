@@ -2687,7 +2687,9 @@ function cityGroundHeightAt(x, z) {
     if (!hit.face || hit.point.y < cityGroundFloorY - 0.5) continue;
     normalMatrix.getNormalMatrix(hit.object.matrixWorld);
     const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
-    if (normal.y < 0.88 || cityPositionBlocked(x, z, hit.point.y)) continue;
+    if (normal.y < 0.88) continue;
+    if (Number.isFinite(cityWaterLevelY) && Math.abs(hit.point.y - cityWaterLevelY) < 0.25) continue;
+    if (cityPositionBlocked(x, z, hit.point.y)) continue;
     return hit.point.y;
   }
   return null;
