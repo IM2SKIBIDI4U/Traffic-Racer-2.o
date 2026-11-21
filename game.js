@@ -2674,10 +2674,9 @@ function createOpenCityWorld() {
       map.updateMatrixWorld(true);
       console.info('Detected Z-up city model; corrected its orientation.');
     }
-    // The imported Castelia model is vertically inverted relative to the
-    // driving world. Flip it over before calculating its ground placement.
-    map.rotation.x += Math.PI;
-    map.updateMatrixWorld(true);
+    // Do not flip the model upside down. GLB files using the standard
+    // glTF Y-up convention should remain upright; only the Z-up correction
+    // above is applied when the model's dimensions indicate that export.
     const bounds = new THREE.Box3().setFromObject(map);
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
