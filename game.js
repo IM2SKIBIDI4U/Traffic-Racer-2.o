@@ -2595,6 +2595,7 @@ let cityGroundGrid = new Map();
 let cityLargeGroundMeshes = [];
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
+let cityWaterLevelY = -Infinity;
 const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
@@ -2602,6 +2603,7 @@ function buildCityCollisionGrid(root) {
   cityCollisionCount = 0;
   cityGroundGrid.clear();
   cityLargeGroundMeshes = [];
+  cityWaterLevelY = -Infinity;
   root.updateMatrixWorld(true);
   const worldBounds = new THREE.Box3().setFromObject(root);
   cityGroundFloorY = worldBounds.min.y;
@@ -2619,8 +2621,13 @@ function buildCityCollisionGrid(root) {
     if (bounds.isEmpty()) return;
     bounds.getSize(size);
     const name = (object.name || '').toLowerCase();
-    const namedGround = /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(name);
-    const broadSurface = size.y <= 1.25 && size.x >= 2 && size.z >= 2;
+    const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(name);
+    if (namedWater) cityWaterLevelY = Math.max(cityWaterLevelY, bounds.max.y);
+    const namedGround = !namedWater && /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(name);
+    // Do not treat full-map planes or water meshes as roads. Named terrain
+    // remains eligible even when it spans most of the map.
+    const broadSurface = !namedWater && size.y <= 1.25 && size.x >= 2 && size.z >= 2 &&
+      size.x <= 160 && size.z <= 160;
     if (namedGround || broadSurface) {
       const minX = Math.floor(bounds.min.x / CITY_GROUND_CELL);
       const maxX = Math.floor(bounds.max.x / CITY_GROUND_CELL);
@@ -2687,7 +2694,9 @@ function cityGroundHeightAt(x, z) {
 }
 function citySafeGroundY(x, z) {
   const surfaceY = cityGroundHeightAt(x, z);
-  return surfaceY === null ? Math.max(0.65, cityGroundFloorY + 0.65) : surfaceY + 0.12;
+  const aboveMapBase = Math.max(0.65, cityGroundFloorY + 0.65);
+  const aboveWater = Number.isFinite(cityWaterLevelY) ? cityWaterLevelY + 1.25 : -Infinity;
+  return surfaceY === null ? Math.max(aboveMapBase, aboveWater) : surfaceY + 0.12;
 }
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
@@ -2710,8 +2719,8 @@ function findCityRoadsideSpawn(root) {
     console.info('Selected clear roadside spawn:', best.toArray());
     return best;
   }
-  console.warn('No clear city ground found; placing the player above the map base.');
-  return new THREE.Vector3(0, Math.max(0.65, cityGroundFloorY + 0.65), 0);
+  console.warn('No clear city ground found; placing the player above the map and water surfaces.');
+  return new THREE.Vector3(0, citySafeGroundY(0, 0), 0);
 }
 
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
