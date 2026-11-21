@@ -2598,6 +2598,8 @@ let cityLargeWaterRegions = [];
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
+let cityRespawnPending = false;
+let cityRespawnScreen = null;
 const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
@@ -2741,9 +2743,42 @@ function citySafeGroundY(x, z) {
   const aboveWater=localWaterY===null?-Infinity:localWaterY+1.25;
   return surfaceY===null?Math.max(aboveMapBase,aboveWater):surfaceY+0.12;
 }
+function showWaterDeathScreen() {
+  if(cityRespawnPending)return;
+  cityRespawnPending=true;
+  paused=true;
+  citySpeedMps=0;
+  actualSpeed=0;
+  for(const key of Object.keys(keys))keys[key]=false;
+  if(!cityRespawnScreen) {
+    cityRespawnScreen=document.createElement('section');
+    cityRespawnScreen.id='city-water-respawn';
+    Object.assign(cityRespawnScreen.style,{position:'fixed',inset:'0',zIndex:'1000',display:'grid',placeItems:'center',background:'rgba(3,10,18,.88)',color:'#fff',font:'700 16px Arial,sans-serif',textAlign:'center'});
+    const card=document.createElement('div');
+    Object.assign(card.style,{width:'min(360px,86vw)',padding:'28px',borderRadius:'16px',background:'rgba(10,22,34,.98)',border:'1px solid rgba(255,255,255,.18)',boxShadow:'0 18px 60px rgba(0,0,0,.5)'});
+    const title=document.createElement('h2');
+    title.textContent='YOU DROVE INTO THE WATER';
+    Object.assign(title.style,{margin:'0 0 12px',fontSize:'clamp(22px,5vw,32px)',letterSpacing:'1px'});
+    const detail=document.createElement('p');
+    detail.textContent='Your car was recovered. Try the road again.';
+    Object.assign(detail.style,{margin:'0 0 22px',color:'rgba(255,255,255,.75)',lineHeight:'1.5'});
+    const button=document.createElement('button');
+    button.type='button';
+    button.textContent='RESPAWN';
+    Object.assign(button.style,{border:'0',borderRadius:'10px',padding:'13px 26px',background:'#21a9f5',color:'#06111b',font:'800 15px Arial,sans-serif',cursor:'pointer'});
+    button.addEventListener('click',respawnCityPlayer);
+    card.append(title,detail,button);
+    cityRespawnScreen.appendChild(card);
+    document.body.appendChild(cityRespawnScreen);
+  }
+  cityRespawnScreen.style.display='grid';
+}
 function respawnCityPlayer() {
-  if(!player||cityRespawnCooldown>0)return;
+  if(!player||!cityRespawnPending)return;
+  cityRespawnPending=false;
   cityRespawnCooldown=1.25;
+  paused=false;
+  if(cityRespawnScreen)cityRespawnScreen.style.display='none';
   cityOnFoot=false;
   if(cityAvatar){scene.remove(cityAvatar);cityAvatar=null;}
   if(cityParkedCar){scene.remove(cityParkedCar);cityParkedCar=null;}
@@ -2766,31 +2801,38 @@ function respawnCityPlayer() {
 }
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
-  let best = null;
-  let bestScore = Infinity;
-  // The ground mesh grid limits each raycast to surfaces near that candidate,
-  // instead of raycasting against every mesh in the 85 MB city model.
-  for (let x = -100; x <= 100; x += 20) {
-    for (let z = -100; z <= 100; z += 20) {
-      const groundY = cityGroundHeightAt(x, z);
-      if (groundY === null || groundY < -1 || groundY > 30) continue;
-      const roadDistanceX=Math.abs(x-Math.round(x/CITY_BLOCK)*CITY_BLOCK);
-      const roadDistanceZ=Math.abs(z-Math.round(z/CITY_BLOCK)*CITY_BLOCK);
-      const roadOffset=Math.min(roadDistanceX,roadDistanceZ);
-      if(roadOffset>11.5)continue;
-      const score = Math.hypot(x, z)+roadOffset*0.5;
-      if (score < bestScore) {
-        bestScore = score;
-        best = new THREE.Vector3(x, groundY + 0.12, z);
+  const candidates=[];
+  const seen=new Set();
+  const laneOffsets=[-3.8,0,3.8];
+  for(let block=-6;block<=6;block++) {
+    const roadLine=block*CITY_BLOCK;
+    for(let along=-600;along<=600;along+=30) {
+      for(const lane of laneOffsets) {
+        const points=[[roadLine+lane,along],[along,roadLine+lane]];
+        for(const [x,z] of points) {
+          const key=Math.round(x*10)+','+Math.round(z*10);
+          if(seen.has(key))continue;
+          seen.add(key);
+          candidates.push({x,z,score:Math.hypot(x,z)});
+        }
       }
     }
   }
-  if (best) {
-    console.info('Selected clear roadside spawn:', best.toArray());
-    return best;
+  candidates.sort((a,b)=>a.score-b.score);
+  // Probe actual surfaces only at city road lanes, nearest roads first.
+  for(const point of candidates) {
+    const groundY=cityGroundHeightAt(point.x,point.z);
+    if(groundY===null||groundY< -1||groundY>30)continue;
+    if(cityPositionBlocked(point.x,point.z,groundY))continue;
+    const spawn=new THREE.Vector3(point.x,groundY+0.12,point.z);
+    console.info('Selected city road spawn:',spawn.toArray());
+    return spawn;
   }
-  console.warn('No clear city ground found; placing the player above the map and water surfaces.');
-  return new THREE.Vector3(0, citySafeGroundY(0, 0), 0);
+  // The road simulation uses a 90-unit city grid. Keep the fallback in a
+  // lane on the nearest road and above any mapped waterline.
+  const x=3.8,z=0;
+  console.warn('No mapped road surface was raycastable; using the nearest city road lane.');
+  return new THREE.Vector3(x,citySafeGroundY(x,z),z);
 }
 
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
@@ -3147,7 +3189,7 @@ function updateOpenCity(dt,stats) {
   // Water is lethal. Road samples above the local water line keep the car
   // grounded; when no road exists over water, respawn at the saved road spawn.
   const playerGroundY=cityGroundHeightAt(player.position.x,player.position.z);
-  if(cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){respawnCityPlayer();return;}
+  if(cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){showWaterDeathScreen();return;}
   player.position.y=playerGroundY===null?citySafeGroundY(player.position.x,player.position.z):playerGroundY+0.12;
   // Stop the car at building hitboxes and reduce speed on impact.
   if (cityCollisionCount && cityPositionBlocked(player.position.x, player.position.z, player.position.y-0.12)) {
@@ -3414,6 +3456,7 @@ if (paused) {
 }
 window.addEventListener('keydown', (event) => {
 const key = event.key.toLowerCase();
+if(cityRespawnPending){if(key==='enter')respawnCityPlayer();return;}
 if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' '].includes(key)) event.preventDefault();
 if (key === 'escape' && running) { togglePause(); return; }
 if (key === 'arrowleft' || key === 'a') setControl('left', true);
@@ -3508,7 +3551,7 @@ function updateCityOnFoot(dt) {
   cityAvatar.position.x=THREE.MathUtils.clamp(cityAvatar.position.x,-CITY_HALF+5,CITY_HALF-5);
   cityAvatar.position.z=THREE.MathUtils.clamp(cityAvatar.position.z,-CITY_HALF+5,CITY_HALF-5);
   const footGroundY=cityGroundHeightAt(cityAvatar.position.x,cityAvatar.position.z);
-  if(cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,footGroundY)){respawnCityPlayer();return;}
+  if(cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,footGroundY)){showWaterDeathScreen();return;}
   cityAvatar.position.y=footGroundY===null?citySafeGroundY(cityAvatar.position.x,cityAvatar.position.z):footGroundY;
   cityAvatar.rotation.y=cityFootHeading;
   player.position.copy(cityAvatar.position);
