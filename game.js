@@ -2610,6 +2610,10 @@ function createOpenCityWorld() {
       map.updateMatrixWorld(true);
       console.info('Detected Z-up city model; corrected its orientation.');
     }
+    // The imported Castelia model is vertically inverted relative to the
+    // driving world. Flip it over before calculating its ground placement.
+    map.rotation.x += Math.PI;
+    map.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(map);
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
@@ -2630,7 +2634,7 @@ function createOpenCityWorld() {
           const materials = Array.isArray(object.material) ? object.material : [object.material];
           for (const mat of materials) {
             if (mat) {
-              mat.side = THREE.FrontSide;
+              mat.side = THREE.DoubleSide;
               mat.needsUpdate = true;
             }
           }
