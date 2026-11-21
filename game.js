@@ -2601,6 +2601,15 @@ function createOpenCityWorld() {
     const map = gltf.scene;
     map.name = 'SanFrancisco_City';
     map.updateMatrixWorld(true);
+    // Some city exports use Z-up instead of the GLTF Y-up convention. Detect
+    // that layout before scaling so the streets are upright in the driving world.
+    const initialBounds = new THREE.Box3().setFromObject(map);
+    const initialSize = initialBounds.getSize(new THREE.Vector3());
+    if (initialSize.y > initialSize.z * 1.5 && initialSize.x > initialSize.z * 1.5) {
+      map.rotation.x = -Math.PI / 2;
+      map.updateMatrixWorld(true);
+      console.info('Detected Z-up city model; corrected its orientation.');
+    }
     const bounds = new THREE.Box3().setFromObject(map);
     const size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
