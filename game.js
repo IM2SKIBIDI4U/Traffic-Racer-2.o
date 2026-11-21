@@ -2600,6 +2600,8 @@ let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
 let cityRespawnPending = false;
 let cityRespawnScreen = null;
+let citySpawnRoadPatch = null;
+let citySpawnRoadBounds = null;
 const cityGroundRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
@@ -2734,7 +2736,27 @@ function cityGroundHeightAt(x, z) {
     if (cityPositionBlocked(x, z, hit.point.y)) continue;
     return hit.point.y;
   }
+  if(citySpawnRoadBounds&&x>=citySpawnRoadBounds.minX&&x<=citySpawnRoadBounds.maxX&&z>=citySpawnRoadBounds.minZ&&z<=citySpawnRoadBounds.maxZ) {
+    return citySpawnRoadBounds.topY;
+  }
   return null;
+}
+function createCitySpawnRoad(spawn) {
+  if(citySpawnRoadPatch)cityRoot.remove(citySpawnRoadPatch);
+  const group=new THREE.Group();
+  const length=220,width=18;
+  const slab=new THREE.Mesh(new THREE.BoxGeometry(width,0.18,length),roadMat);
+  slab.position.y=0;
+  group.add(slab);
+  for(const side of [-1,1]) {
+    const edge=new THREE.Mesh(new THREE.BoxGeometry(0.14,0.04,length),whiteLine);
+    edge.position.set(side*(width/2-0.35),0.11,0);
+    group.add(edge);
+  }
+  group.position.set(spawn.x,spawn.y+0.01,spawn.z);
+  cityRoot.add(group);
+  citySpawnRoadPatch=group;
+  citySpawnRoadBounds={minX:spawn.x-width/2,maxX:spawn.x+width/2,minZ:spawn.z-length/2,maxZ:spawn.z+length/2,topY:group.position.y+0.09};
 }
 function citySafeGroundY(x, z) {
   const surfaceY=cityGroundHeightAt(x,z);
@@ -2766,7 +2788,7 @@ function showWaterDeathScreen() {
     button.type='button';
     button.textContent='RESPAWN';
     Object.assign(button.style,{border:'0',borderRadius:'10px',padding:'13px 26px',background:'#21a9f5',color:'#06111b',font:'800 15px Arial,sans-serif',cursor:'pointer'});
-    button.addEventListener('click',respawnCityPlayer);
+    button.addEventListener('click',()=>respawnCityPlayer());
     card.append(title,detail,button);
     cityRespawnScreen.appendChild(card);
     document.body.appendChild(cityRespawnScreen);
@@ -2918,6 +2940,7 @@ function createOpenCityWorld() {
     cityRoot.add(map);
     buildCityCollisionGrid(map);
     citySpawnPosition.copy(findCityRoadsideSpawn(map));
+    createCitySpawnRoad(citySpawnPosition);
     cityWorldReady = true;
     if (running && player) {
       player.position.copy(citySpawnPosition);
