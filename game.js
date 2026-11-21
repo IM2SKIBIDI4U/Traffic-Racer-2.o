@@ -2713,12 +2713,18 @@ function createOpenCityWorld() {
     const map = gltf.scene;
     map.name = 'SanFrancisco_City';
     map.updateMatrixWorld(true);
-    // GLB/glTF scenes are Y-up by specification. Do not auto-rotate based
-    // on bounding-box proportions: city footprints can trigger false positives.
+    // Some city exporters label a Z-up scene as glTF/Y-up. Detect that case
+    // from the original footprint and convert it before scaling or spawning.
     map.rotation.set(0, 0, 0);
-    map.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(map);
-    const size = bounds.getSize(new THREE.Vector3());
+    let bounds = new THREE.Box3().setFromObject(map);
+    let size = bounds.getSize(new THREE.Vector3());
+    if (size.z < size.y * 0.45 && size.y > size.x * 0.35) {
+      map.rotation.x = -Math.PI / 2;
+      map.updateMatrixWorld(true);
+      console.info('Converted Z-up city model to Y-up.');
+    }
+    bounds = new THREE.Box3().setFromObject(map);
+    size = bounds.getSize(new THREE.Vector3());
     const center = bounds.getCenter(new THREE.Vector3());
     const horizontalSize = Math.max(size.x, size.z);
     if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01) {
@@ -2998,8 +3004,10 @@ function updateOpenCity(dt,stats) {
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
-  player.position.y=citySpawnPosition.y;
-  // Keep the player inside the connected city limits.
+  // Keep the wheels just above the ground. This is the solid ground
+  // collision plane for the entire city, not just the decorative road meshes.
+  player.position.y=citySpawnPosition.y+0.12;
+  // Invisible perimeter hitbox keeps the car inside the loaded city footprint.
   player.position.x=THREE.MathUtils.clamp(player.position.x,-CITY_HALF+14,CITY_HALF-14);
   player.position.z=THREE.MathUtils.clamp(player.position.z,-CITY_HALF+14,CITY_HALF-14);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
