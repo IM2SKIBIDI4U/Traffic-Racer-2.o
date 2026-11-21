@@ -2636,7 +2636,7 @@ function findCityRoadsideSpawn(root) {
   root.traverse((object) => {
     if (object.isMesh && object.geometry) meshes.push(object);
   });
-  if (!meshes.length) return new THREE.Vector3(0, 0, 0);
+  if (!meshes.length) return new THREE.Vector3(0, 4, 0);
   const mapBounds = new THREE.Box3().setFromObject(root);
   const mapSize = mapBounds.getSize(new THREE.Vector3());
   const raycaster = new THREE.Raycaster();
