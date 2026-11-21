@@ -2601,6 +2601,7 @@ let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
+  cityBuildingGrid.clear();
   cityGroundGrid.clear();
   cityLargeGroundMeshes = [];
   cityWaterLevelY = -Infinity;
@@ -2653,6 +2654,15 @@ function buildCityCollisionGrid(root) {
       minY: bounds.min.y, maxY: bounds.max.y,
       minZ: bounds.min.z, maxZ: bounds.max.z
     };
+    const building = {
+      x: (bounds.min.x + bounds.max.x) / 2,
+      z: (bounds.min.z + bounds.max.z) / 2,
+      halfW: size.x / 2, halfD: size.z / 2,
+      minY: bounds.min.y, maxY: bounds.max.y
+    };
+    const buildingCellX = Math.floor(building.x / CITY_BLOCK);
+    const buildingCellZ = Math.floor(building.z / CITY_BLOCK);
+    addCell(cityBuildingGrid, buildingCellX + ',' + buildingCellZ, building);
     const minCellX = Math.floor(collider.minX / CITY_COLLISION_CELL);
     const maxCellX = Math.floor(collider.maxX / CITY_COLLISION_CELL);
     const minCellZ = Math.floor(collider.minZ / CITY_COLLISION_CELL);
@@ -2845,6 +2855,7 @@ function spawnCityTraffic() {
   const road=Math.round((Math.random()*12-6))*CITY_BLOCK;
   const lane=(Math.random()<0.5?-1:1)*3.8;
   mesh.position.set(axis==='x'?player.position.x+(Math.random()-0.5)*180:road+lane,0,axis==='z'?player.position.z+(Math.random()-0.5)*180:road);
+  mesh.position.y=citySafeGroundY(mesh.position.x,mesh.position.z);
   mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
   scene.add(mesh);
   cityTraffic.push({mesh,axis,sign,speed:13+Math.random()*9,turnAt:0,turnCooldown:4});
@@ -2866,6 +2877,7 @@ function spawnCityPolice() {
     const roadX=Math.round(spawn.x/CITY_BLOCK)*CITY_BLOCK;
     mesh.position.set(roadX+lane,0,spawn.z);
   }
+  mesh.position.y=citySafeGroundY(mesh.position.x,mesh.position.z);
   const sign=axis==='x'?(player.position.x>=mesh.position.x?1:-1):(player.position.z>=mesh.position.z?1:-1);
   mesh.rotation.y=axis==='x'?(sign>0?Math.PI/2:-Math.PI/2):(sign>0?0:Math.PI);
   scene.add(mesh);
@@ -3115,6 +3127,7 @@ function updateOpenCity(dt,stats) {
   // the player stays below the offence threshold for a while.
   for(const cop of cityPolice) {
     if(cop.disabled)continue;
+    const oldCopX=cop.mesh.position.x,oldCopZ=cop.mesh.position.z;
     const dx=player.position.x-cop.mesh.position.x,dz=player.position.z-cop.mesh.position.z;
     const distance=Math.hypot(dx,dz);
     const desired=Math.atan2(dx,dz);
@@ -3123,6 +3136,10 @@ function updateOpenCity(dt,stats) {
     const speed=cityWantedLevel?Math.min(43,29+cityWantedLevel*2):0;
     cop.mesh.position.x+=Math.sin(cop.mesh.rotation.y)*speed*dt;
     cop.mesh.position.z+=Math.cos(cop.mesh.rotation.y)*speed*dt;
+    cop.mesh.position.y=citySafeGroundY(cop.mesh.position.x,cop.mesh.position.z);
+    if(cityPositionBlocked(cop.mesh.position.x,cop.mesh.position.z,cop.mesh.position.y-0.12)) {
+      cop.mesh.position.x=oldCopX;cop.mesh.position.z=oldCopZ;cop.sign*=-1;
+    }
     if(distance<3.7 && hitCooldown<=0) { damagePlayer(4+cityWantedLevel); citySpeedMps*=0.78; hitCooldown=0.9; }
   }
   if(cityWantedLevel>0 && cityLawbreakingTime===0 && actualSpeed<85) {
@@ -3148,6 +3165,7 @@ function updateOpenCity(dt,stats) {
   // Traffic uses the same grid and makes deliberate turns at intersections.
   while(cityTraffic.length<12)spawnCityTraffic();
   for(const bot of cityTraffic) {
+    const oldBotX=bot.mesh.position.x,oldBotZ=bot.mesh.position.z;
     bot.turnCooldown-=dt;
     const dir=bot.axis==='x'?new THREE.Vector3(bot.sign,0,0):new THREE.Vector3(0,0,bot.sign);
     bot.mesh.position.addScaledVector(dir,bot.speed*dt);
@@ -3170,6 +3188,10 @@ function updateOpenCity(dt,stats) {
     if(bot.mesh.position.x>CITY_HALF||bot.mesh.position.x< -CITY_HALF||bot.mesh.position.z>CITY_HALF||bot.mesh.position.z< -CITY_HALF) {
       bot.mesh.position.copy(player.position).add(new THREE.Vector3((Math.random()-0.5)*180,0,(Math.random()-0.5)*180));
     }
+    bot.mesh.position.y=citySafeGroundY(bot.mesh.position.x,bot.mesh.position.z);
+    if(cityPositionBlocked(bot.mesh.position.x,bot.mesh.position.z,bot.mesh.position.y-0.12)) {
+      bot.mesh.position.x=oldBotX;bot.mesh.position.z=oldBotZ;bot.sign*=-1;bot.turnCooldown=2;
+    }
     if(cityVehicleCollision(player,bot.mesh,Math.abs(citySpeedMps))) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
     }
@@ -3186,6 +3208,8 @@ function updateOpenCity(dt,stats) {
     const nearby=cityBuildingGrid.get((blockX+ox)+','+(blockZ+oz));
     if(!nearby)continue;
     for(const building of nearby) {
+      const carBottom=player.position.y-0.12;
+      if(building.maxY<carBottom+0.15||building.minY>carBottom+2.4)continue;
       const dx=player.position.x-building.x;
       const dz=player.position.z-building.z;
       const px=building.halfW+carRadius-Math.abs(dx);
@@ -3431,6 +3455,7 @@ function updateCityOnFoot(dt) {
   for(const bot of cityTraffic) {
     const dir=bot.axis==='x'?new THREE.Vector3(bot.sign,0,0):new THREE.Vector3(0,0,bot.sign);
     bot.mesh.position.addScaledVector(dir,bot.speed*dt);
+    bot.mesh.position.y=citySafeGroundY(bot.mesh.position.x,bot.mesh.position.z);
     bot.mesh.rotation.y=bot.axis==='x'?(bot.sign>0?Math.PI/2:-Math.PI/2):(bot.sign>0?0:Math.PI);
   }
   for(const cop of cityPolice) if(!cop.disabled) {
@@ -3439,6 +3464,7 @@ function updateCityOnFoot(dt) {
     cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
     cop.mesh.position.x+=Math.sin(cop.mesh.rotation.y)*Math.min(43,29+cityWantedLevel*2)*dt;
     cop.mesh.position.z+=Math.cos(cop.mesh.rotation.y)*Math.min(43,29+cityWantedLevel*2)*dt;
+    cop.mesh.position.y=citySafeGroundY(cop.mesh.position.x,cop.mesh.position.z);
   }
   camera.position.set(cityAvatar.position.x-Math.sin(cityFootHeading)*5,cityAvatar.position.y+3.4,cityAvatar.position.z-Math.cos(cityFootHeading)*5);
   camera.lookAt(cityAvatar.position.x,cityAvatar.position.y+1.2,cityAvatar.position.z);
