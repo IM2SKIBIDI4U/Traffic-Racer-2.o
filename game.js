@@ -2612,6 +2612,7 @@ let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
 function splitCamelliaRoadAndWaterSurfaces(root) {
   root.updateMatrixWorld(true);
+  const surfacesToAttach = [];
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry || !Array.isArray(object.material)) return;
     const sourceGroups = object.geometry.groups.slice();
@@ -2643,9 +2644,10 @@ function splitCamelliaRoadAndWaterSurfaces(root) {
       surface.name = surfaceType === 'road' ? 'Camellia_City_Asphalt_Roads' : 'Camellia_City_Water';
       surface.userData.cityRoadSurface = surfaceType === 'road';
       surface.userData.cityWaterSurface = surfaceType === 'water';
-      object.add(surface);
+      surfacesToAttach.push({parent:object,surface});
     }
   });
+  for (const {parent,surface} of surfacesToAttach) parent.add(surface);
 }
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
