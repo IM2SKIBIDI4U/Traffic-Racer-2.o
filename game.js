@@ -2959,6 +2959,7 @@ function createOpenCityWorld() {
           return fastMaterialCache.get('fallback');
         }
         if (!fastMaterialCache.has(mat.uuid)) fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
+          name: mat.name,
           map: mat.map || null,
           alphaMap: mat.alphaMap || null,
           color: 0xffffff,
@@ -3247,7 +3248,7 @@ function updateOpenCity(dt,stats) {
   // Water is lethal. Road samples above the local water line keep the car
   // grounded; when no road exists over water, respawn at the saved road spawn.
   const playerGroundY=cityGroundHeightAt(player.position.x,player.position.z);
-  if(cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){showWaterDeathScreen();return;}
+  if(cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){showWaterDeathScreen();return;}
   player.position.y=playerGroundY===null?citySafeGroundY(player.position.x,player.position.z):playerGroundY+0.12;
   // Stop the car at building hitboxes and reduce speed on impact.
   if (cityCollisionCount && cityPositionBlocked(player.position.x, player.position.z, player.position.y-0.12)) {
@@ -3609,7 +3610,7 @@ function updateCityOnFoot(dt) {
   cityAvatar.position.x=THREE.MathUtils.clamp(cityAvatar.position.x,-CITY_HALF+5,CITY_HALF-5);
   cityAvatar.position.z=THREE.MathUtils.clamp(cityAvatar.position.z,-CITY_HALF+5,CITY_HALF-5);
   const footGroundY=cityGroundHeightAt(cityAvatar.position.x,cityAvatar.position.z);
-  if(cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,footGroundY)){showWaterDeathScreen();return;}
+  if(cityRespawnCooldown<=0&&cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,footGroundY)){showWaterDeathScreen();return;}
   cityAvatar.position.y=footGroundY===null?citySafeGroundY(cityAvatar.position.x,cityAvatar.position.z):footGroundY;
   cityAvatar.rotation.y=cityFootHeading;
   player.position.copy(cityAvatar.position);
