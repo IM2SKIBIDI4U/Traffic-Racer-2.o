@@ -124,6 +124,7 @@ let cityDistance = 0;
 let citySpeedMps = 0;
 let cityHeading = 0;
 let cityWorldReady = false;
+let cityWorldLoading = false;
 const CITY_BLOCK = 90;
 const CITY_HALF = 630;
 let dragRaceActive = false;
@@ -2596,6 +2597,7 @@ let cityCollisionCount = 0;
 let cityGroundGrid = new Map();
 let cityLargeGroundMeshes = [];
 let cityRoadCandidates = [];
+let cityTerrainCandidates = [];
 let cityWaterGrid = new Map();
 let cityLargeWaterRegions = [];
 let cityGroundFloorY = 0;
@@ -2613,6 +2615,7 @@ function buildCityCollisionGrid(root) {
   cityGroundGrid.clear();
   cityLargeGroundMeshes = [];
   cityRoadCandidates = [];
+  cityTerrainCandidates = [];
   cityWaterGrid.clear();
   cityLargeWaterRegions = [];
   root.updateMatrixWorld(true);
@@ -2638,7 +2641,9 @@ function buildCityCollisionGrid(root) {
     const surfaceTags = names.join(' ').toLowerCase();
     const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(surfaceTags);
     const terrainSurface = /terrain/.test(surfaceTags);
-    const namedGround = !namedWater && /(road|street|ground|terrain|sidewalk|asphalt|pavement|floor)/.test(surfaceTags);
+    const namedRoad = !namedWater && /(road|street|asphalt|roadway|crossroad)/.test(surfaceTags);
+    const pavedGround = !namedWater && /(sidewalk|pavement|stone[_ ]?pavers|concrete[_ ]?sidewalk)/.test(surfaceTags);
+    const namedGround = !namedWater && (namedRoad || pavedGround || /(ground|terrain|floor)/.test(surfaceTags));
     const wideFlatSurface = size.y <= 1.25 && Math.max(size.x, size.z) > 160;
     const waterSurface = namedWater || (wideFlatSurface && !namedGround);
     if (waterSurface) {
@@ -2649,17 +2654,15 @@ function buildCityCollisionGrid(root) {
       if(cellCount>900)cityLargeWaterRegions.push(region);
       else for(let x=minX;x<=maxX;x++)for(let z=minZ;z<=maxZ;z++)addCell(cityWaterGrid,x+','+z,region);
     }
-    const namedRoad=!namedWater&&/(road|street|asphalt|pavement|roadway|stone[_ ]?pavers|concrete[_ ]?sidewalk)/.test(surfaceTags);
     const shortSide=Math.min(size.x,size.z),longSide=Math.max(size.x,size.z);
     const roadLikeSurface=!waterSurface&&size.y<=1.25&&shortSide>=6&&shortSide<=40&&longSide>=30&&longSide/shortSide>=1.7;
     if(terrainSurface&&!waterSurface) {
-      // Terrain meshes are the only continuous drivable surfaces in this GLB.
-      // Keep them as candidates, but the spawn chooser now requires a clear,
-      // dry run ahead before it accepts any point on them.
+      // Terrain is only used to place the imported road model over dry land.
+      // It is never considered a road spawn surface.
       const step=18;
       for(let x=bounds.min.x+step/2;x<bounds.max.x;x+=step) {
         for(let z=bounds.min.z+step/2;z<bounds.max.z;z+=step) {
-          cityRoadCandidates.push({x,z,fallbackY:bounds.max.y,mesh:object,terrain:true});
+          cityTerrainCandidates.push({x,z,mesh:object});
         }
       }
     } else if(namedRoad||roadLikeSurface) {
@@ -2693,7 +2696,7 @@ function buildCityCollisionGrid(root) {
     }
     // Building hitboxes are simplified AABBs. Road and terrain meshes are
     // handled by the ground-height sampler instead.
-    if (size.y < 1.25 || size.x < 0.8 || size.z < 0.8) return;
+    if (namedRoad || roadLikeSurface || terrainSurface || size.y < 1.25 || size.x < 0.8 || size.z < 0.8) return;
     if (size.x > 160 || size.z > 160 || size.y > 240) return;
     const collider = {
       minX: bounds.min.x, maxX: bounds.max.x,
@@ -2857,6 +2860,44 @@ function cityRoadHeightAt(candidate) {
   if(cityPositionBlocked(candidate.x,candidate.z,candidate.fallbackY))return null;
   return candidate.fallbackY;
 }
+function findCityTerrainAnchor() {
+  const candidates=[...cityTerrainCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
+  for(const point of candidates) {
+    const groundY=cityGroundHeightAt(point.x,point.z);
+    if(groundY!==null&&!cityIsWaterAt(point.x,point.z,groundY))return new THREE.Vector3(point.x,groundY,point.z);
+  }
+  return null;
+}
+function findCityRoadModelAnchor(root) {
+  root.updateMatrixWorld(true);
+  const box=new THREE.Box3(),size=new THREE.Vector3(),candidates=[];
+  root.traverse((object)=>{
+    if(!object.isMesh||!object.geometry)return;
+    const tags=[];
+    for(let parent=object;parent;parent=parent.parent)tags.push(parent.name||'');
+    const label=tags.join(' ').toLowerCase();
+    if(!/(double road start|double road|crossroad)/.test(label))return;
+    box.setFromObject(object);
+    if(box.isEmpty())return;
+    box.getSize(size);
+    candidates.push({mesh:object,label,x:(box.min.x+box.max.x)/2,z:(box.min.z+box.max.z)/2,priority:/double road start/.test(label)?0:1,area:size.x*size.z});
+  });
+  candidates.sort((a,b)=>a.priority-b.priority||b.area-a.area);
+  const normalMatrix=new THREE.Matrix3();
+  for(const candidate of candidates) {
+    cityGroundRaycaster.ray.origin.set(candidate.x,cityGroundCeilingY+100,candidate.z);
+    cityGroundRaycaster.ray.direction.set(0,-1,0);
+    cityGroundRaycaster.near=0;
+    cityGroundRaycaster.far=Math.max(300,cityGroundCeilingY-cityGroundFloorY+200);
+    for(const hit of cityGroundRaycaster.intersectObject(candidate.mesh,false)) {
+      if(!hit.face)continue;
+      normalMatrix.getNormalMatrix(hit.object.matrixWorld);
+      if(hit.face.normal.clone().applyMatrix3(normalMatrix).normalize().y<0.88)continue;
+      return hit.point.clone();
+    }
+  }
+  return null;
+}
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
   const roads=[...cityRoadCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
@@ -2890,7 +2931,7 @@ function findCityRoadsideSpawn(root) {
     console.warn('Only a short paved path was found for the city spawn:',best.pathLength);
     return new THREE.Vector3(best.road.x,best.groundY+0.12,best.road.z);
   }
-  console.warn('No safe paved road spawn was found in the city model.');
+  console.warn('No safe spawn could be found on the imported road meshes.');
   return new THREE.Vector3(0,Math.max(0.65,cityGroundFloorY+0.65),0);
 }
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
@@ -2914,19 +2955,20 @@ function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
 }
 
 function createOpenCityWorld() {
-  if (cityWorldReady) return;
+  if (cityWorldReady || cityWorldLoading) return;
+  cityWorldLoading = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
   cityBuildingGrid = new Map();
   cityRoot = new THREE.Group();
   cityRoot.name = 'san_francisco_city_map';
   scene.add(cityRoot);
 
-  // Load the user's San Francisco city map from Git LFS. The model is centered
-  // on the driving world and scaled to fit the existing city coordinate space.
+  // Load the city backdrop from Git LFS and place its existing road model over
+  // the nearest dry terrain point so the player starts on real road geometry.
   const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/Castelia%20City.glb';
   gltfLoader.load(mapUrl, (gltf) => {
     const map = gltf.scene;
-    map.name = 'SanFrancisco_City';
+    map.name = 'Castelia_City_Backdrop';
     map.updateMatrixWorld(true);
     // GLB/glTF uses Y-up coordinates. Do not guess the axis from the
     // building heights: tall buildings can fool that heuristic and turn the
@@ -2976,18 +3018,46 @@ function createOpenCityWorld() {
     });
     cityRoot.add(map);
     buildCityCollisionGrid(map);
-    citySpawnPosition.copy(findCityRoadsideSpawn(map));
-    cityWorldReady = true;
-    if (running && player) {
-      player.position.copy(citySpawnPosition);
-      player.rotation.set(0, 0, 0);
-      cityHeading = citySpawnHeading;
-      citySpeedMps = 0;
-    }
-    console.info('Castelia City loaded.', {size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount, meshes: map.children.length});
+    const landAnchor=findCityTerrainAnchor();
+    const roadUrl='https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/road_modular.glb';
+    gltfLoader.load(roadUrl,(roadGltf)=>{
+      const roadRoot=new THREE.Group();
+      roadRoot.name='city_modular_scene';
+      const roadMap=roadGltf.scene;
+      roadMap.updateMatrixWorld(true);
+      const roadBounds=new THREE.Box3().setFromObject(roadMap);
+      const roadCenter=roadBounds.getCenter(new THREE.Vector3());
+      roadMap.position.set(-roadCenter.x,-roadBounds.min.y,-roadCenter.z);
+      roadMap.updateMatrixWorld(true);
+      roadRoot.add(roadMap);
+      cityRoot.add(roadRoot);
+      const roadAnchor=findCityRoadModelAnchor(roadMap);
+      if(landAnchor&&roadAnchor)roadRoot.position.copy(landAnchor).sub(roadAnchor);
+      else console.warn('Could not align the imported road network to dry terrain.');
+      cityRoot.updateMatrixWorld(true);
+      buildCityCollisionGrid(cityRoot);
+      citySpawnPosition.copy(findCityRoadsideSpawn(cityRoot));
+      cityWorldReady=true;
+      cityWorldLoading=false;
+      if(running&&player) {
+        player.position.copy(citySpawnPosition);
+        player.rotation.set(0,0,0);
+        cityHeading=citySpawnHeading;
+        citySpeedMps=0;
+      }
+      console.info('Loaded city backdrop and existing road network.', {size:size.toArray(),scale:mapScale,hitboxes:cityCollisionCount,roadMeshes:cityRoadCandidates.length});
+    },undefined,(error)=>{
+      cityWorldLoading=false;
+      console.error('Could not load road_modular.glb:',error);
+      const warning=document.createElement('div');
+      warning.textContent='CITY ROAD MODEL FAILED TO LOAD';
+      Object.assign(warning.style,{position:'fixed',top:'58px',left:'50%',transform:'translateX(-50%)',zIndex:'50',padding:'9px 13px',borderRadius:'7px',background:'rgba(90,20,20,.9)',color:'#fff',font:'700 12px Arial,sans-serif',pointerEvents:'none'});
+      document.body.appendChild(warning);
+    });
   }, (event) => {
-    if (event.total) console.info('Loading San Francisco map:', Math.round(event.loaded / event.total * 100) + '%');
+    if (event.total) console.info('Loading city backdrop:', Math.round(event.loaded / event.total * 100) + '%');
   }, (error) => {
+    cityWorldLoading = false;
     cityWorldReady = false;
     console.error('Could not load Castelia City.glb:', error);
     const warning = document.createElement('div');
