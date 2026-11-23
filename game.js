@@ -2625,15 +2625,13 @@ function updateTraffic(dt, previousPlayer) {
 // Road, sidewalk and roof faces are omitted so they cannot create phantom borders.
 const CITY_COLLISION_CELL = 24;
 const CITY_GROUND_CELL = CITY_COLLISION_CELL;
+const CITY_RENDER_CHUNK_SIZE = 120;
 let cityCollisionGrid = new Map();
 let cityCollisionCount = 0;
-let cityCollisionMeshes = [];
 let cityGroundGrid = new Map();
 let cityRoadMeshGrid = new Map();
 let cityWaterMeshGrid = new Map();
-let cityLargeGroundMeshes = [];
 let cityRoadCandidates = [];
-let cityTerrainCandidates = [];
 let cityWaterGrid = new Map();
 let cityLargeWaterRegions = [];
 let cityWaterSurfaceMeshes = [];
@@ -2648,377 +2646,134 @@ const cityGroundRaycaster = new THREE.Raycaster();
 const cityCollisionRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
-function splitCamelliaRoadAndWaterSurfaces(root) {
+function splitManhattanRenderMeshes(root) {
   root.updateMatrixWorld(true);
-  const surfacesToAttach = [];
+  const replacements = [];
+  let sourceMeshCount = 0;
+  let chunkCount = 0;
+  const worldPoint = new THREE.Vector3();
+
   root.traverse((object) => {
-    if (!object.isMesh || !object.geometry || !Array.isArray(object.material)) return;
-    const sourceGroups = object.geometry.groups.slice();
-    const surfaceIndices = new Map();
-    for (let materialIndex = 0; materialIndex < object.material.length; materialIndex++) {
-      const materialName = object.material[materialIndex]?.name || '';
-      if (materialName === '_Gray6_2') surfaceIndices.set(materialIndex, 'road');
-      else if (materialName === '_4' || materialName === '_24') surfaceIndices.set(materialIndex, 'water');
+    if (!object.isMesh || !object.geometry?.attributes?.position) return;
+    const sourceGeometry = object.geometry;
+    const position = sourceGeometry.attributes.position;
+    const index = sourceGeometry.index;
+    const groups = sourceGeometry.groups.length
+      ? sourceGeometry.groups
+      : [{start:0,count:index ? index.count : position.count,materialIndex:0}];
+    const triangleCount = groups.reduce((sum, group) => sum + Math.floor(group.count / 3), 0);
+    if (triangleCount < 2000) {
+      object.userData.cityVisibleChunk = true;
+      return;
     }
-    if (!surfaceIndices.size) return;
-    const remainingGroups = sourceGroups.filter((group) => !surfaceIndices.has(group.materialIndex));
-    object.geometry.clearGroups();
-    for (const group of remainingGroups) object.geometry.addGroup(group.start, group.count, group.materialIndex);
-    object.userData.cityIgnoreGroundSampler = true;
-    for (const [materialIndex, surfaceType] of surfaceIndices) {
-      const groups = sourceGroups.filter((group) => group.materialIndex === materialIndex);
-      if (!groups.length) continue;
-      const geometry = new THREE.BufferGeometry();
-      for (const [name, attribute] of Object.entries(object.geometry.attributes)) geometry.setAttribute(name, attribute);
-      if (object.geometry.index) geometry.setIndex(object.geometry.index);
-      geometry.boundingBox = object.geometry.boundingBox?.clone() || null;
-      geometry.boundingSphere = object.geometry.boundingSphere?.clone() || null;
-      for (const group of groups) geometry.addGroup(group.start, group.count, 0);
-      const material = object.material[materialIndex];
-      material.side = THREE.DoubleSide;
-      // Keep the selected FBX material group isolated for both drawing and
-      // raycasts; Three.js ignores geometry groups with a single material.
-      const surface = new THREE.Mesh(geometry, [material]);
-      surface.name = surfaceType === 'road' ? 'Camellia_City_Asphalt_Roads' : 'Camellia_City_Water';
-      surface.userData.cityRoadSurface = surfaceType === 'road';
-      surface.userData.cityWaterSurface = surfaceType === 'water';
-      surfacesToAttach.push({parent:object,surface});
+
+    sourceMeshCount++;
+    const cells = new Map();
+    for (const group of groups) {
+      const end = Math.min(group.start + group.count, index ? index.count : position.count);
+      for (let i = group.start; i + 2 < end; i += 3) {
+        const a = index ? index.getX(i) : i;
+        const b = index ? index.getX(i + 1) : i + 1;
+        const c = index ? index.getX(i + 2) : i + 2;
+        const x = (position.getX(a) + position.getX(b) + position.getX(c)) / 3;
+        const y = (position.getY(a) + position.getY(b) + position.getY(c)) / 3;
+        const z = (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3;
+        worldPoint.set(x,y,z).applyMatrix4(object.matrixWorld);
+        const cellX = Math.floor(worldPoint.x / CITY_RENDER_CHUNK_SIZE);
+        const cellZ = Math.floor(worldPoint.z / CITY_RENDER_CHUNK_SIZE);
+        const key = cellX + ',' + cellZ;
+        let cell = cells.get(key);
+        if (!cell) cells.set(key, cell = {cellX,cellZ,groups:new Map()});
+        let indices = cell.groups.get(group.materialIndex || 0);
+        if (!indices) cell.groups.set(group.materialIndex || 0, indices = []);
+        indices.push(a,b,c);
+      }
+    }
+
+    for (const cell of cells.values()) {
+      const indexCount = [...cell.groups.values()].reduce((sum, indices) => sum + indices.length, 0);
+      const chunkGeometry = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) chunkGeometry.setAttribute(name, attribute);
+      const chunkIndices = new Uint32Array(indexCount);
+      let offset = 0;
+      for (const [materialIndex, indices] of cell.groups) {
+        chunkIndices.set(indices, offset);
+        chunkGeometry.addGroup(offset,indices.length,materialIndex);
+        offset += indices.length;
+      }
+      chunkGeometry.setIndex(new THREE.BufferAttribute(chunkIndices,1));
+      chunkGeometry.computeBoundingBox();
+      chunkGeometry.computeBoundingSphere();
+
+      const chunk = object.clone(false);
+      chunk.geometry = chunkGeometry;
+      chunk.name = (object.name || 'Manhattan_Mesh') + '_tile_' + cell.cellX + '_' + cell.cellZ;
+      chunk.userData = {...(object.userData || {}),cityVisibleChunk:true};
+      chunk.frustumCulled = true;
+      replacements.push({parent:object.parent,source:object,chunk});
+      chunkCount++;
     }
   });
-  for (const {parent,surface} of surfacesToAttach) parent.add(surface);
+
+  for (const {parent,source,chunk} of replacements) {
+    parent.add(chunk);
+    parent.remove(source);
+  }
+  root.updateMatrixWorld(true);
+  console.info('Split Manhattan city meshes into view-cullable tiles:', {sourceMeshCount,chunkCount,tileSize:CITY_RENDER_CHUNK_SIZE});
+  return chunkCount;
 }
-function buildCityCollisionGrid(root, buildingColliderRoot = root, lightweight = false) {
+function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
-  cityCollisionMeshes = [];
   cityGroundGrid.clear();
   cityRoadMeshGrid.clear();
-  cityWaterMeshGrid.clear();
-  cityLargeGroundMeshes = [];
   cityRoadCandidates = [];
-  cityTerrainCandidates = [];
-  cityWaterGrid.clear();
-  cityLargeWaterRegions = [];
-  cityWaterSurfaceMeshes = [];
   root.updateMatrixWorld(true);
   const worldBounds = new THREE.Box3().setFromObject(root);
   cityGroundFloorY = worldBounds.min.y;
   cityGroundCeilingY = worldBounds.max.y;
-  if (lightweight) {
-    // Avoid full-map triangle preprocessing on lower-memory devices.
-    // The sampled ground meshes are reused as lightweight road candidates.
-    root.traverse((object) => {
-      if (!object.isMesh || !object.userData.cityRoadSurface) return;
-      object.geometry.computeBoundingBox();
-      const box = object.geometry.boundingBox;
-      if (!box) return;
-      const worldBox = box.clone().applyMatrix4(object.matrixWorld);
-      const sample = object.userData.cityRoadCandidate;
-      const x = sample ? sample.x : (worldBox.min.x + worldBox.max.x) * 0.5;
-      const z = sample ? sample.z : (worldBox.min.z + worldBox.max.z) * 0.5;
-      const sampledY = sample ? sample.y : worldBox.min.y;
-      const cellX = Math.floor(x / CITY_GROUND_CELL);
-      const cellZ = Math.floor(z / CITY_GROUND_CELL);
-      const roadKey = cellX + ',' + cellZ;
-      const roadBucket = cityRoadMeshGrid.get(roadKey) || [];
-      roadBucket.push(object);
-      cityRoadMeshGrid.set(roadKey, roadBucket);
-      cityRoadCandidates.push({ x, z, fallbackY: sampledY, mesh: object });
-    });
-    console.warn('Using lightweight Manhattan collision mode; detailed building hitboxes are disabled.');
-    return;
-  }
   const bounds = new THREE.Box3();
-  const size = new THREE.Vector3();
-  const cityCollisionMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
   const addCell = (grid, key, value) => {
     let bucket = grid.get(key);
     if (!bucket) grid.set(key, bucket = []);
     if (!bucket.includes(value)) bucket.push(value);
   };
-  const addGroundMesh = (mesh, groupBounds) => {
-    const minX = Math.floor(groupBounds.min.x / CITY_GROUND_CELL);
-    const maxX = Math.floor(groupBounds.max.x / CITY_GROUND_CELL);
-    const minZ = Math.floor(groupBounds.min.z / CITY_GROUND_CELL);
-    const maxZ = Math.floor(groupBounds.max.z / CITY_GROUND_CELL);
-    const cellCount = (maxX - minX + 1) * (maxZ - minZ + 1);
-    if (cellCount > 900) cityLargeGroundMeshes.push(mesh);
-    else for (let x = minX; x <= maxX; x++) for (let z = minZ; z <= maxZ; z++) {
-      addCell(cityGroundGrid, x + ',' + z, mesh);
+  const addBoundsToGrid = (grid, mesh, meshBounds, cellSize) => {
+    const minCellX = Math.floor(meshBounds.min.x / cellSize);
+    const maxCellX = Math.floor(meshBounds.max.x / cellSize);
+    const minCellZ = Math.floor(meshBounds.min.z / cellSize);
+    const maxCellZ = Math.floor(meshBounds.max.z / cellSize);
+    for (let x = minCellX; x <= maxCellX; x++) for (let z = minCellZ; z <= maxCellZ; z++) {
+      addCell(grid,x+','+z,mesh);
     }
   };
-  const makeTriangleChunk = (object, triangles, material, name) => {
-    const sourceGeometry = object.geometry;
-    const chunkGeometry = new THREE.BufferGeometry();
-    for (const [attributeName, attribute] of Object.entries(sourceGeometry.attributes)) {
-      const values = new attribute.array.constructor(triangles.length * attribute.itemSize);
-      let cursor = 0;
-      for (const vertexIndex of triangles) {
-        for (let component = 0; component < attribute.itemSize; component++) {
-          values[cursor++] = attribute.getComponent(vertexIndex, component);
-        }
-      }
-      chunkGeometry.setAttribute(attributeName, new THREE.BufferAttribute(values, attribute.itemSize, attribute.normalized));
-    }
-    chunkGeometry.computeBoundingBox();
-    chunkGeometry.computeBoundingSphere();
-    const chunkMaterial = material?.clone ? material.clone() : new THREE.MeshBasicMaterial({color:0x888888});
-    chunkMaterial.side = THREE.DoubleSide;
-    const mesh = new THREE.Mesh(chunkGeometry, chunkMaterial);
-    mesh.name = name;
-    mesh.matrixAutoUpdate = false;
-    mesh.matrix.copy(object.matrixWorld);
-    mesh.matrixWorld.copy(object.matrixWorld);
-    mesh.frustumCulled = false;
-    return mesh;
-  };
-  const createSurfaceChunks = (object, surfaceType) => {
-    const geometry = object.geometry;
-    const position = geometry.attributes.position;
-    const index = geometry.index;
-    const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-    const chunks = new Map();
-    const worldPoint = new THREE.Vector3();
-    for (const group of geometry.groups) {
-      const material = sourceMaterials[group.materialIndex];
-      if (!material) continue;
-      for (let i = group.start; i < group.start + group.count; i += 3) {
-        const a = index ? index.getX(i) : i;
-        const b = index ? index.getX(i + 1) : i + 1;
-        const c = index ? index.getX(i + 2) : i + 2;
-        worldPoint.set(
-          (position.getX(a) + position.getX(b) + position.getX(c)) / 3,
-          (position.getY(a) + position.getY(b) + position.getY(c)) / 3,
-          (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3
-        ).applyMatrix4(object.matrixWorld);
-        const cell = Math.floor(worldPoint.x / CITY_COLLISION_CELL) + ',' + Math.floor(worldPoint.z / CITY_COLLISION_CELL);
-        let chunk = chunks.get(cell);
-        if (!chunk) chunks.set(cell, chunk = {indices:[],x:0,y:0,z:0,count:0,material});
-        chunk.indices.push(a,b,c);
-        chunk.x += worldPoint.x; chunk.y += worldPoint.y; chunk.z += worldPoint.z; chunk.count++;
-      }
-    }
-    for (const [cell, chunk] of chunks) {
-      const mesh = makeTriangleChunk(object, chunk.indices, chunk.material,
-        'Camellia_City_' + (surfaceType === 'road' ? 'Road' : 'Water') + '_Chunk');
-      const groupBounds = new THREE.Box3().setFromObject(mesh);
-      const minX = Math.floor(groupBounds.min.x / CITY_GROUND_CELL);
-      const maxX = Math.floor(groupBounds.max.x / CITY_GROUND_CELL);
-      const minZ = Math.floor(groupBounds.min.z / CITY_GROUND_CELL);
-      const maxZ = Math.floor(groupBounds.max.z / CITY_GROUND_CELL);
-      if (surfaceType === 'road') {
-        mesh.userData.cityRoadSurface = true;
-        cityRoadCandidates.push({x:chunk.x/chunk.count,z:chunk.z/chunk.count,fallbackY:chunk.y/chunk.count,mesh});
-        for (let x = minX; x <= maxX; x++) for (let z = minZ; z <= maxZ; z++) addCell(cityRoadMeshGrid, x + ',' + z, mesh);
-        addGroundMesh(mesh, groupBounds);
-      } else {
-        mesh.userData.cityWaterSurface = true;
-        cityWaterSurfaceMeshes.push(mesh);
-        for (let x = minX; x <= maxX; x++) for (let z = minZ; z <= maxZ; z++) addCell(cityWaterMeshGrid, x + ',' + z, mesh);
-      }
-    }
-  };
-  const groupWorldBounds = (object, group) => {
-    const geometry = object.geometry;
-    const position = geometry.attributes.position;
-    const index = geometry.index;
-    const result = new THREE.Box3().makeEmpty();
-    const vertex = new THREE.Vector3();
-    for (let i = group.start; i < group.start + group.count; i++) {
-      const vertexIndex = index ? index.getX(i) : i;
-      vertex.set(position.getX(vertexIndex), position.getY(vertexIndex), position.getZ(vertexIndex));
-      result.expandByPoint(vertex.applyMatrix4(object.matrixWorld));
-    }
-    return result;
-  };
-  const makeGroupSurface = (object, group, material) => {
-    const geometry = new THREE.BufferGeometry();
-    for (const [attributeName, attribute] of Object.entries(object.geometry.attributes)) {
-      geometry.setAttribute(attributeName, attribute);
-    }
-    if (object.geometry.index) geometry.setIndex(object.geometry.index);
-    geometry.addGroup(group.start, group.count, 0);
-    geometry.boundingBox = object.geometry.boundingBox?.clone() || null;
-    geometry.boundingSphere = object.geometry.boundingSphere?.clone() || null;
-    const surfaceMaterial = material.clone();
-    surfaceMaterial.side = THREE.DoubleSide;
-    const mesh = new THREE.Mesh(geometry, [surfaceMaterial]);
-    mesh.name = 'Camellia_City_Ground_Surface';
-    mesh.matrixAutoUpdate = false;
-    mesh.matrix.copy(object.matrixWorld);
-    mesh.matrixWorld.copy(object.matrixWorld);
-    mesh.frustumCulled = false;
-    return mesh;
-  };
-  const makeBuildingCollisionChunks = (object) => {
-    const geometry = object.geometry;
-    const position = geometry.attributes.position;
-    if (!position) return [];
-    const index = geometry.index;
-    const groups = geometry.groups.length
-      ? geometry.groups
-      : [{start:0,count:index ? index.count : position.count,materialIndex:0}];
-    const chunks = new Map();
-    const localA = new THREE.Vector3();
-    const localB = new THREE.Vector3();
-    const localC = new THREE.Vector3();
-    const worldA = new THREE.Vector3();
-    const worldB = new THREE.Vector3();
-    const worldC = new THREE.Vector3();
-    const edgeAB = new THREE.Vector3();
-    const edgeAC = new THREE.Vector3();
-    for (const group of groups) {
-      const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
-        const a = index ? index.getX(i) : i;
-        const b = index ? index.getX(i + 1) : i + 1;
-        const c = index ? index.getX(i + 2) : i + 2;
-        localA.fromBufferAttribute(position, a);
-        localB.fromBufferAttribute(position, b);
-        localC.fromBufferAttribute(position, c);
-        worldA.copy(localA).applyMatrix4(object.matrixWorld);
-        worldB.copy(localB).applyMatrix4(object.matrixWorld);
-        worldC.copy(localC).applyMatrix4(object.matrixWorld);
-        edgeAB.subVectors(worldB, worldA);
-        edgeAC.subVectors(worldC, worldA);
-        const normalY = Math.abs(edgeAB.cross(edgeAC).normalize().y);
-        // Roads, sidewalks, roofs and other nearly level faces are not walls.
-        // Leaving them out prevents phantom edges and keeps the car on the road.
-        if (normalY > 0.72) continue;
-        const centerX = (worldA.x + worldB.x + worldC.x) / 3;
-        const centerZ = (worldA.z + worldB.z + worldC.z) / 3;
-        const key = Math.floor(centerX / CITY_COLLISION_CELL) + ',' + Math.floor(centerZ / CITY_COLLISION_CELL);
-        let chunk = chunks.get(key);
-        if (!chunk) chunks.set(key, chunk = []);
-        chunk.push(
-          worldA.x,worldA.y,worldA.z,
-          worldB.x,worldB.y,worldB.z,
-          worldC.x,worldC.y,worldC.z
-        );
-      }
-    }
-    const colliders = [];
-    for (const [cell, vertices] of chunks) {
-      const collisionGeometry = new THREE.BufferGeometry();
-      collisionGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-      collisionGeometry.computeBoundingBox();
-      collisionGeometry.computeBoundingSphere();
-      const collisionMesh = new THREE.Mesh(collisionGeometry, cityCollisionMaterial);
-      collisionMesh.name = 'Camellia_City_Building_Collider_' + object.name + '_' + cell;
-      collisionMesh.matrixAutoUpdate = false;
-      collisionMesh.matrixWorldAutoUpdate = false;
-      collisionMesh.matrix.identity();
-      collisionMesh.matrixWorld.identity();
-      collisionMesh.frustumCulled = false;
-      const box = collisionGeometry.boundingBox;
-      colliders.push({
-        mesh:collisionMesh,
-        minX:box.min.x,maxX:box.max.x,
-        minY:box.min.y,maxY:box.max.y,
-        minZ:box.min.z,maxZ:box.max.z
-      });
-    }
-    return colliders;
-  };
+
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry) return;
     bounds.setFromObject(object);
     if (bounds.isEmpty()) return;
-    bounds.getSize(size);
-    const objectNames = [object.name || ''];
-    for (let parent = object.parent; parent; parent = parent.parent) objectNames.push(parent.name || '');
-    const materials = Array.isArray(object.material) ? object.material : [object.material];
-    const objectTags = objectNames.join(' ').toLowerCase();
-    const surfaceTags = (objectTags + ' ' + materials.map((material) => material?.name || '').join(' ')).toLowerCase();
-    if (object.userData.cityWaterSurface) {
-      createSurfaceChunks(object, 'water');
-      return;
-    }
     if (object.userData.cityRoadSurface) {
-      createSurfaceChunks(object, 'road');
+      // Index the same sampled road triangles for spawning and live driving.
+      addBoundsToGrid(cityGroundGrid,object,bounds,CITY_GROUND_CELL);
+      addBoundsToGrid(cityRoadMeshGrid,object,bounds,CITY_GROUND_CELL);
+      const sample = object.userData.cityRoadCandidate;
+      if (sample) cityRoadCandidates.push({x:sample.x,z:sample.z,fallbackY:sample.y,mesh:object});
       return;
     }
-    const namedWater = /(water|ocean|sea|river|lake|canal|pool)/.test(surfaceTags);
-    const terrainSurface = /terrain/.test(surfaceTags);
-    const namedGround = !namedWater && /(sidewalk|pavement|stone[_ ]?pavers|concrete[_ ]?sidewalk|ground|terrain|floor)/.test(objectTags);
-    const wideFlatSurface = size.y <= 1.25 && Math.max(size.x, size.z) > 160;
-    const waterSurface = namedWater || (wideFlatSurface && !namedGround);
-    if (waterSurface) {
-      const region = {minX:bounds.min.x,maxX:bounds.max.x,minZ:bounds.min.z,maxZ:bounds.max.z,waterY:bounds.max.y};
-      const minX=Math.floor(region.minX/CITY_GROUND_CELL),maxX=Math.floor(region.maxX/CITY_GROUND_CELL);
-      const minZ=Math.floor(region.minZ/CITY_GROUND_CELL),maxZ=Math.floor(region.maxZ/CITY_GROUND_CELL);
-      const cellCount=(maxX-minX+1)*(maxZ-minZ+1);
-      if(cellCount>900)cityLargeWaterRegions.push(region);
-      else for(let x=minX;x<=maxX;x++)for(let z=minZ;z<=maxZ;z++)addCell(cityWaterGrid,x+','+z,region);
-    }
-    if (!object.userData.cityIgnoreGroundSampler) {
-      const geometry = object.geometry;
-      const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-      for (const group of geometry.groups) {
-        const material = sourceMaterials[group.materialIndex];
-        if (!material) continue;
-        const materialName = (material.name || '').toLowerCase();
-        const groupBounds = groupWorldBounds(object, group);
-        if (groupBounds.isEmpty()) continue;
-        const groupSize = groupBounds.getSize(new THREE.Vector3());
-        const groupTags = (objectTags + ' ' + materialName).toLowerCase();
-        const groupWater = /(water|ocean|sea|river|lake|canal|pool)/.test(groupTags);
-        const groupRoad = /(road|street|asphalt|roadway|crossroad)/.test(groupTags);
-        const groundMaterial = /(sidewalk|pavement|pavers?|concrete|ground|terrain|floor)/.test(groupTags);
-        const flatGround = !groupWater && !groupRoad && groupSize.y <= 1.25 &&
-          groupSize.x >= 2 && groupSize.z >= 2 && (groundMaterial || terrainSurface || namedGround);
-        if (!flatGround) continue;
-        const groundMesh = makeGroupSurface(object, group, material);
-        addGroundMesh(groundMesh, groupBounds);
-        if (terrainSurface) {
-          for (let x = groupBounds.min.x + 9; x < groupBounds.max.x; x += 18) {
-            for (let z = groupBounds.min.z + 9; z < groupBounds.max.z; z += 18) {
-              cityTerrainCandidates.push({x,z,mesh:groundMesh});
-            }
-          }
-        }
-      }
-    }
-    if (buildingColliderRoot !== root || namedWater || terrainSurface || size.y <= 1.25 || size.x < 0.8 || size.z < 0.8 || object.userData.cityIgnoreGroundSampler) return;
-
-    // Spatially chunk actual vertical facade triangles. Flat road and roof
-    // faces never become car blockers, and collision rays test only nearby walls.
-    for (const collider of makeBuildingCollisionChunks(object)) {
-      cityCollisionMeshes.push(collider);
-      const minCellX = Math.floor(collider.minX / CITY_COLLISION_CELL);
-      const maxCellX = Math.floor(collider.maxX / CITY_COLLISION_CELL);
-      const minCellZ = Math.floor(collider.minZ / CITY_COLLISION_CELL);
-      const maxCellZ = Math.floor(collider.maxZ / CITY_COLLISION_CELL);
-      for (let x = minCellX; x <= maxCellX; x++) for (let z = minCellZ; z <= maxCellZ; z++) addCell(cityCollisionGrid, x + ',' + z, collider);
-      cityCollisionCount++;
-    }
+    if (!object.userData.cityVisibleChunk) return;
+    const collider = {
+      mesh:object,
+      minX:bounds.min.x-0.18,minY:bounds.min.y-0.18,minZ:bounds.min.z-0.18,
+      maxX:bounds.max.x+0.18,maxY:bounds.max.y+0.18,maxZ:bounds.max.z+0.18
+    };
+    addBoundsToGrid(cityCollisionGrid,collider,bounds,CITY_COLLISION_CELL);
+    cityCollisionCount++;
   });
-  if (buildingColliderRoot !== root) {
-    buildingColliderRoot.updateMatrixWorld(true);
-    buildingColliderRoot.traverse((object) => {
-      if (!object.isMesh || !object.geometry || !/_hull_00$/i.test(object.name || '')) return;
-      // Mesh1 is the full-map base hull, not a building. Its outer faces would
-      // recreate a hidden perimeter, so keep roads and map edges out of the wall grid.
-      if ((object.name || '').toLowerCase() === 'mesh1_hull_00') return;
-      bounds.setFromObject(object);
-      if (bounds.isEmpty()) return;
-      bounds.getSize(size);
-      if (size.y <= 1.25 || size.x < 0.8 || size.z < 0.8) return;
-      for (const collider of makeBuildingCollisionChunks(object)) {
-        cityCollisionMeshes.push(collider);
-        const minCellX = Math.floor(collider.minX / CITY_COLLISION_CELL);
-        const maxCellX = Math.floor(collider.maxX / CITY_COLLISION_CELL);
-        const minCellZ = Math.floor(collider.minZ / CITY_COLLISION_CELL);
-        const maxCellZ = Math.floor(collider.maxZ / CITY_COLLISION_CELL);
-        for (let x = minCellX; x <= maxCellX; x++) for (let z = minCellZ; z <= maxCellZ; z++) addCell(cityCollisionGrid, x + ',' + z, collider);
-        cityCollisionCount++;
-      }
-    });
-  }
-  console.info('Generated City road chunks, ground surfaces, and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityLargeGroundMeshes.length, cityCollisionCount);
+  console.info('Prepared Manhattan road samples and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
-  const candidates = new Set(cityLargeGroundMeshes);
+  const candidates = new Set();
   const cellX = Math.floor(x / CITY_GROUND_CELL);
   const cellZ = Math.floor(z / CITY_GROUND_CELL);
   for (let ox = -1; ox <= 1; ox++) {
@@ -3181,44 +2936,6 @@ function cityRoadHeightAt(candidate) {
   if(candidate.terrain)return null;
   if(waterY!==null&&candidate.fallbackY<=waterY+0.25)return null;
   return candidate.fallbackY;
-}
-function findCityTerrainAnchor() {
-  const candidates=[...cityTerrainCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
-  for(const point of candidates) {
-    const groundY=cityGroundHeightAt(point.x,point.z);
-    if(groundY!==null&&!cityIsWaterAt(point.x,point.z,groundY))return new THREE.Vector3(point.x,groundY,point.z);
-  }
-  return null;
-}
-function findCityRoadModelAnchor(root) {
-  root.updateMatrixWorld(true);
-  const box=new THREE.Box3(),size=new THREE.Vector3(),candidates=[];
-  root.traverse((object)=>{
-    if(!object.isMesh||!object.geometry)return;
-    const tags=[];
-    for(let parent=object;parent;parent=parent.parent)tags.push(parent.name||'');
-    const label=tags.join(' ').toLowerCase();
-    if(!/(double road start|double road|crossroad)/.test(label))return;
-    box.setFromObject(object);
-    if(box.isEmpty())return;
-    box.getSize(size);
-    candidates.push({mesh:object,label,x:(box.min.x+box.max.x)/2,z:(box.min.z+box.max.z)/2,priority:/double road start/.test(label)?0:1,area:size.x*size.z});
-  });
-  candidates.sort((a,b)=>a.priority-b.priority||b.area-a.area);
-  const normalMatrix=new THREE.Matrix3();
-  for(const candidate of candidates) {
-    cityGroundRaycaster.ray.origin.set(candidate.x,cityGroundCeilingY+100,candidate.z);
-    cityGroundRaycaster.ray.direction.set(0,-1,0);
-    cityGroundRaycaster.near=0;
-    cityGroundRaycaster.far=Math.max(300,cityGroundCeilingY-cityGroundFloorY+200);
-    for(const hit of cityGroundRaycaster.intersectObject(candidate.mesh,false)) {
-      if(!hit.face)continue;
-      normalMatrix.getNormalMatrix(hit.object.matrixWorld);
-      if(hit.face.normal.clone().applyMatrix3(normalMatrix).normalize().y<0.88)continue;
-      return hit.point.clone();
-    }
-  }
-  return null;
 }
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
@@ -3491,6 +3208,7 @@ function createOpenCityWorld() {
         object.receiveShadow = false;
         object.frustumCulled = true;
       });
+      const cityChunkCount = splitManhattanRenderMeshes(map);
 
       cityRoot.add(map);
       cityRoot.updateMatrixWorld(true);
@@ -3500,9 +3218,9 @@ function createOpenCityWorld() {
         throw new Error('No upward-facing ground triangles were found near the bottom of the Manhattan GLB.');
       }
 
-      // Use the map's exported hull meshes for building collision instead of
-      // rebuilding triangle colliders from every visible building surface.
-      buildCityCollisionGrid(cityRoot, map, true);
+      // Reuse the view-cullable city tiles as local wall colliders and index
+      // sampled ground triangles for both driving and respawn placement.
+      buildCityCollisionGrid(cityRoot);
       let spawn = findCityRoadsideSpawn(cityRoot);
       if (!spawn && cityRoadCandidates.length) {
         // Last-resort spawn: choose a clear sampled ground triangle and a
@@ -3572,6 +3290,7 @@ function createOpenCityWorld() {
         size: size.toArray(),
         scale: mapScale,
         hitboxes: cityCollisionCount,
+        renderChunks: cityChunkCount,
         roadMeshes: cityRoadCandidates.length,
         groundCells: cityGroundGrid.size,
         spawn: citySpawnPosition.toArray(),
@@ -3874,8 +3593,8 @@ function updateOpenCity(dt,stats) {
   player.rotation.y=cityHeading;
   const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
   const oldPosition=player.position.clone();
-  // Sample the imported asphalt mesh; the old artificial grid does not match
-  // the streets in this city model.
+  // Sample the imported city's ground triangles; the old artificial grid does
+  // not match this model's streets.
   const onRoad=cityGroundHeightAt(player.position.x,player.position.z)!==null;
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
@@ -3887,8 +3606,8 @@ function updateOpenCity(dt,stats) {
   // grounded; when no road exists over water, respawn at the saved road spawn.
   let playerGroundY=cityGroundHeightAt(player.position.x,player.position.z);
   if(cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){showWaterDeathScreen();return;}
-  // Cast against the actual FBX building triangles. Their spatial bounds only
-  // narrow the search; there is no rectangular box around the whole building.
+  // Cast against nearby triangles from the imported city tiles so streets stay
+  // clear while building walls still block the player.
   if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12)) {
     player.position.x = oldPosition.x;
     player.position.z = oldPosition.z;
