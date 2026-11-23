@@ -139,8 +139,8 @@ let cityWantedLevel = 0;
 let cityLawbreakingTime = 0;
 let cityPoliceSpawnTimer = 0;
 let cityTrafficSpawnTimer = 0;
-const CITY_TRAFFIC_TARGET = 18;
-const CITY_TRAFFIC_LIMIT = 24;
+const CITY_TRAFFIC_TARGET = 8;
+const CITY_TRAFFIC_LIMIT = 12;
 let cityOnFoot = false;
 let cityAvatar = null;
 let cityParkedCar = null;
@@ -3365,7 +3365,7 @@ function createManhattanGroundSurfaces(map, mapBounds) {
   const groundBand = THREE.MathUtils.clamp(height * 0.12, 2, 32);
   const chunks = new Map();
   // Keep the generated raycast layer bounded on large city exports.
-  const MAX_GROUND_TRIANGLES = 120000;
+  const MAX_GROUND_TRIANGLES = 30000;
   let generatedTriangles = 0;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
@@ -3385,8 +3385,9 @@ function createManhattanGroundSurfaces(map, mapBounds) {
       ? geometry.groups
       : [{ start: 0, count: index ? index.count : position.count }];
     for (const group of groups) {
+      if (generatedTriangles >= MAX_GROUND_TRIANGLES) break;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end; i += 3) {
+      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
         const ia = index ? index.getX(i) : i;
         const ib = index ? index.getX(i + 1) : i + 1;
         const ic = index ? index.getX(i + 2) : i + 2;
