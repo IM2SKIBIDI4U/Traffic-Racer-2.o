@@ -3015,7 +3015,6 @@ function cityRoadHeightAt(candidate) {
 function findCityRoadsideSpawn(root) {
   root.updateMatrixWorld(true);
   const roads=[...cityRoadCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
-  let best=null;
   for(const road of roads) {
     const roadY=cityRoadHeightAt(road);
     if(roadY===null||roadY<cityGroundFloorY-0.5||roadY>cityGroundCeilingY+0.5)continue;
@@ -3034,14 +3033,12 @@ function findCityRoadsideSpawn(root) {
       }
       if(pathLength>bestPath){bestPath=pathLength;bestHeading=heading;}
     }
-    if(bestPath>=(best?.pathLength||0))best={road,groundY:supportedY,pathLength:bestPath,heading:bestHeading};
-    if(bestPath>=80)break;
-  }
-  if(best&&best.pathLength>=64) {
-    citySpawnHeading=best.heading;
-    const spawn=new THREE.Vector3(best.road.x,best.groundY+0.12,best.road.z);
-    console.info('Selected a clear paved city spawn:',spawn.toArray(),best.road.mesh.name,'clear path:',best.pathLength);
-    return spawn;
+    if(bestPath>=64) {
+      citySpawnHeading=bestHeading;
+      const spawn=new THREE.Vector3(road.x,supportedY+0.12,road.z);
+      console.info('Selected a clear paved city spawn:',spawn.toArray(),road.mesh.name,'clear path:',bestPath);
+      return spawn;
+    }
   }
   console.warn('No safe spawn could be found on the imported road meshes.');
   return null;
@@ -3181,14 +3178,12 @@ function createManhattanGroundSurfaces(map, mapBounds) {
     const groups = geometry.groups.length
       ? geometry.groups
       : [{ start: 0, count: index ? index.count : position.count }];
-    // Sample across each mesh instead of taking only its first triangles. This
-    // spreads the invisible ground collision layer over the whole city.
-    const meshTriangleCount = groups.reduce((sum, group) => sum + Math.floor(group.count / 3), 0);
-    const sampleStride = Math.max(1, Math.ceil(meshTriangleCount / 4000));
+    // Keep every upward-facing triangle in the ground band. Thinning these
+    // triangles creates invisible holes that let cars fall through the city.
     for (const group of groups) {
       if (generatedTriangles >= MAX_GROUND_TRIANGLES) break;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3 * sampleStride) {
+      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
         const ia = index ? index.getX(i) : i;
         const ib = index ? index.getX(i + 1) : i + 1;
         const ic = index ? index.getX(i + 2) : i + 2;
