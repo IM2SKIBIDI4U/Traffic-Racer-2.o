@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
@@ -468,7 +467,7 @@ function finishLoadingScreen() {
         cityMapRetryButton.addEventListener('click', () => {
           cityMapRetryButton.style.display = 'none';
           cityMapLoadFailed = false;
-          $('loading-message').textContent = 'Loading Camellia city roads…';
+          $('loading-message').textContent = 'Loading Manhattan city map…';
           if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
           cityRoot = null;
           createOpenCityWorld();
@@ -2992,7 +2991,7 @@ function buildCityCollisionGrid(root, buildingColliderRoot = root) {
       }
     });
   }
-  console.info('Generated Camellia road chunks, ground surfaces, and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityLargeGroundMeshes.length, cityCollisionCount);
+  console.info('Generated City road chunks, ground surfaces, and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityLargeGroundMeshes.length, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
   const candidates = new Set(cityLargeGroundMeshes);
@@ -3328,7 +3327,98 @@ function failCityMapLoad(error) {
   cityMapLoadFailed = true;
   if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
   cityRoot = null;
-  console.error('Camellia City could not be prepared:', error);
+  console.error('Manhattan GLB could not be prepared:', error);
+  finishLoadingScreen();
+}
+
+function createManhattanGroundSurfaces(map, mapBounds) {
+  // The Manhattan GLB is a visual city export rather than the old FBX package
+  // with separately named road materials. Build a lightweight road/ground
+  // raycast layer from upward-facing triangles close to the bottom of the map.
+  map.updateMatrixWorld(true);
+  const minY = mapBounds.min.y;
+  const height = Math.max(1, mapBounds.max.y - mapBounds.min.y);
+  const groundBand = THREE.MathUtils.clamp(height * 0.12, 2, 32);
+  const chunks = new Map();
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const normal = new THREE.Vector3();
+  const center = new THREE.Vector3();
+
+  map.traverse((object) => {
+    if (!object.isMesh || !object.geometry?.attributes?.position) return;
+    const geometry = object.geometry;
+    const position = geometry.attributes.position;
+    const index = geometry.index;
+    const groups = geometry.groups.length
+      ? geometry.groups
+      : [{ start: 0, count: index ? index.count : position.count }];
+    for (const group of groups) {
+      const end = Math.min(group.start + group.count, index ? index.count : position.count);
+      for (let i = group.start; i + 2 < end; i += 3) {
+        const ia = index ? index.getX(i) : i;
+        const ib = index ? index.getX(i + 1) : i + 1;
+        const ic = index ? index.getX(i + 2) : i + 2;
+        a.fromBufferAttribute(position, ia).applyMatrix4(object.matrixWorld);
+        b.fromBufferAttribute(position, ib).applyMatrix4(object.matrixWorld);
+        c.fromBufferAttribute(position, ic).applyMatrix4(object.matrixWorld);
+        ab.subVectors(b, a);
+        ac.subVectors(c, a);
+        normal.crossVectors(ab, ac).normalize();
+        if (normal.y < 0.88) continue;
+        center.copy(a).add(b).add(c).multiplyScalar(1 / 3);
+        if (center.y > minY + groundBand) continue;
+        const key = Math.floor(center.x / CITY_COLLISION_CELL) + ',' +
+          Math.floor(center.z / CITY_COLLISION_CELL);
+        let chunk = chunks.get(key);
+        if (!chunk) chunks.set(key, chunk = []);
+        chunk.push(
+          a.x,a.y,a.z,
+          b.x,b.y,b.z,
+          c.x,c.y,c.z
+        );
+      }
+    }
+  });
+
+  let triangleCount = 0;
+  for (const [cell, vertices] of chunks) {
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.addGroup(0, vertices.length / 3, 0);
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    const surface = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0,
+      depthWrite: false
+    }));
+    surface.name = 'Manhattan_Road_Ground_' + cell;
+    surface.userData.cityRoadSurface = true;
+    surface.matrixAutoUpdate = false;
+    surface.matrix.identity();
+    surface.matrixWorld.identity();
+    cityRoot.add(surface);
+    triangleCount += vertices.length / 9;
+  }
+  console.info('Generated Manhattan ground/road sampling surfaces:', {
+    chunks: chunks.size, triangles: triangleCount, groundBand
+  });
+  return triangleCount;
+}
+
+function failCityMapLoad(error) {
+  cityWorldLoading = false;
+  cityWorldReady = false;
+  cityMapLoadFailed = true;
+  if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
+  cityRoot = null;
+  console.error('Manhattan GLB could not be prepared:', error);
   finishLoadingScreen();
 }
 
@@ -3336,103 +3426,140 @@ function createOpenCityWorld() {
   if (cityWorldReady || cityWorldLoading) return;
   cityWorldLoading = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
-  $('loading-message').textContent = 'Loading Camellia city roads…';
+  $('loading-message').textContent = 'Loading Manhattan city map…';
   cityRoot = new THREE.Group();
-  cityRoot.name = 'camellia_city_map';
+  cityRoot.name = 'manhattan_city_map';
   scene.add(cityRoot);
 
-  const mapUrl = './assets/camellia-city/camellia-city.fbx';
-  const cityLoader = new FBXLoader();
-  cityLoader.load(mapUrl, (map) => {
+  const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/manhatten.glb';
+  gltfLoader.load(mapUrl, (gltf) => {
     try {
-    map.name = 'Camellia_City_Backdrop';
-    map.updateMatrixWorld(true);
-    const bounds = new THREE.Box3().setFromObject(map);
-    const size = bounds.getSize(new THREE.Vector3());
-    const center = bounds.getCenter(new THREE.Vector3());
-    const horizontalSize = Math.max(size.x, size.z);
-    if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01) {
-      throw new Error('Camellia City FBX has invalid dimensions.');
-    }
-
-    const mapScale = 1400 / horizontalSize;
-    map.scale.setScalar(mapScale);
-    map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
-    const fastMaterialCache = new Map();
-    map.traverse((object) => {
-      if (!object.isMesh) return;
-      object.castShadow = false;
-      object.receiveShadow = false;
-      object.frustumCulled = true;
-      const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-      const fastMaterials = sourceMaterials.map((mat) => {
-        if (!mat) {
-          if (!fastMaterialCache.has('fallback')) fastMaterialCache.set('fallback', new THREE.MeshBasicMaterial({ color: 0xcccccc }));
-          return fastMaterialCache.get('fallback');
-        }
-        if (!fastMaterialCache.has(mat.uuid)) fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
-          name: mat.name,
-          map: mat.map || null,
-          alphaMap: mat.alphaMap || null,
-          color: 0xffffff,
-          vertexColors: !!mat.vertexColors,
-          transparent: !!mat.transparent,
-          opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
-          alphaTest: mat.alphaTest || 0,
-          side: THREE.FrontSide,
-          depthWrite: mat.depthWrite !== false
-        }));
-        return fastMaterialCache.get(mat.uuid);
-      });
-      object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
-    });
-
-    splitCamelliaRoadAndWaterSurfaces(map);
-    cityRoot.add(map);
-    cityRoot.updateMatrixWorld(true);
-    const finishCityMapSetup = (collisionRoot) => {
-      try {
-        if (collisionRoot) {
-          collisionRoot.scale.setScalar(mapScale);
-          collisionRoot.position.copy(map.position);
-          collisionRoot.updateMatrixWorld(true);
-        }
-        buildCityCollisionGrid(map, collisionRoot || map);
-        const spawn = findCityRoadsideSpawn(map);
-        if (!spawn || !cityRoadCandidates.length) throw new Error('No clear spawn could be found on the imported asphalt roads.');
-        citySpawnPosition.copy(spawn);
-        cityWorldReady = true;
-        cityWorldLoading = false;
-        cityMapLoadFinished = true;
-        cityMapLoadFailed = false;
-        if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
-        if (running && player) {
-          player.position.copy(citySpawnPosition);
-          player.rotation.set(0, citySpawnHeading, 0);
-          cityHeading = citySpawnHeading;
-          citySpeedMps = 0;
-        }
-        console.info('Loaded Camellia City and selected a spawn on its asphalt streets.', {
-          size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount,
-          roadMeshes: cityRoadCandidates.length, waterMeshes: cityWaterSurfaceMeshes.length,
-          collisionFBX: !!collisionRoot, spawn: citySpawnPosition.toArray(), heading: citySpawnHeading
-        });
-        finishLoadingScreen();
-      } catch (error) {
-        failCityMapLoad(error);
+      const map = gltf.scene;
+      map.name = 'Manhattan_City';
+      map.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(map);
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      const horizontalSize = Math.max(size.x, size.z);
+      if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01 || !Number.isFinite(size.y)) {
+        throw new Error('Manhattan GLB has invalid dimensions or orientation.');
       }
-    };
-    cityLoader.load('./assets/camellia-city/Camellia_City_collision.fbx', finishCityMapSetup, (event) => {
-      if (event.total) console.info('Loading Camellia building hitboxes:', Math.round(event.loaded / event.total * 100) + '%');
-    }, (error) => {
-      console.warn('Could not load Camellia collision FBX; using wall geometry from the city model:', error);
-      finishCityMapSetup(null);
-    });
+
+      // GLB/glTF uses Y-up. Fit the city's horizontal footprint into the
+      // existing driving world while preserving its proportions.
+      const mapScale = 1400 / horizontalSize;
+      map.scale.setScalar(mapScale);
+      map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
+      map.updateMatrixWorld(true);
+
+      const fastMaterialCache = new Map();
+      map.traverse((object) => {
+        if (!object.isMesh) return;
+        object.castShadow = false;
+        object.receiveShadow = false;
+        object.frustumCulled = true;
+        const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
+        const fastMaterials = sourceMaterials.map((mat) => {
+          if (!mat) {
+            if (!fastMaterialCache.has('fallback')) {
+              fastMaterialCache.set('fallback', new THREE.MeshBasicMaterial({ color: 0xcccccc }));
+            }
+            return fastMaterialCache.get('fallback');
+          }
+          if (!fastMaterialCache.has(mat.uuid)) {
+            fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
+              name: mat.name,
+              map: mat.map || null,
+              alphaMap: mat.alphaMap || null,
+              color: mat.color ? mat.color.clone() : 0xffffff,
+              vertexColors: !!mat.vertexColors,
+              transparent: !!mat.transparent,
+              opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
+              alphaTest: mat.alphaTest || 0,
+              side: THREE.DoubleSide,
+              depthWrite: mat.depthWrite !== false
+            }));
+          }
+          return fastMaterialCache.get(mat.uuid);
+        });
+        object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
+      });
+
+      cityRoot.add(map);
+      cityRoot.updateMatrixWorld(true);
+      const scaledBounds = new THREE.Box3().setFromObject(map);
+      const groundTriangles = createManhattanGroundSurfaces(map, scaledBounds);
+      if (!groundTriangles) {
+        throw new Error('No upward-facing ground triangles were found near the bottom of the Manhattan GLB.');
+      }
+
+      buildCityCollisionGrid(cityRoot, map);
+      let spawn = findCityRoadsideSpawn(cityRoot);
+      if (!spawn && cityRoadCandidates.length) {
+        // Last-resort spawn: choose a clear sampled ground triangle and a
+        // direction with the longest continuous stretch of ground.
+        let fallback = null;
+        for (const road of cityRoadCandidates) {
+          const y = cityRoadHeightAt(road);
+          if (y === null || cityPositionBlocked(road.x, road.z, y)) continue;
+          let bestLength = 0;
+          let bestHeading = 0;
+          for (let direction = 0; direction < 8; direction++) {
+            const heading = direction * Math.PI / 4;
+            let length = 0;
+            for (let distance = 8; distance <= 64; distance += 8) {
+              const x = road.x + Math.sin(heading) * distance;
+              const z = road.z + Math.cos(heading) * distance;
+              if (cityRoadHeightAt({ x, z, mesh: road.mesh }) === null) break;
+              length = distance;
+            }
+            if (length > bestLength) {
+              bestLength = length;
+              bestHeading = heading;
+            }
+          }
+          if (!fallback || bestLength > fallback.length) {
+            fallback = { road, y, length: bestLength, heading: bestHeading };
+          }
+        }
+        if (fallback && fallback.length >= 8) {
+          citySpawnHeading = fallback.heading;
+          spawn = new THREE.Vector3(fallback.road.x, fallback.y + 0.12, fallback.road.z);
+        }
+      }
+      if (!spawn || !cityRoadCandidates.length) {
+        throw new Error('Could not find a usable ground spawn in the Manhattan GLB.');
+      }
+
+      citySpawnPosition.copy(spawn);
+      cityWorldReady = true;
+      cityWorldLoading = false;
+      cityMapLoadFinished = true;
+      cityMapLoadFailed = false;
+      if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
+      if (running && player) {
+        player.position.copy(citySpawnPosition);
+        player.rotation.set(0, citySpawnHeading, 0);
+        cityHeading = citySpawnHeading;
+        citySpeedMps = 0;
+      }
+      console.info('Loaded Manhattan GLB and prepared driving surfaces/colliders.', {
+        size: size.toArray(),
+        scale: mapScale,
+        hitboxes: cityCollisionCount,
+        roadMeshes: cityRoadCandidates.length,
+        groundCells: cityGroundGrid.size,
+        spawn: citySpawnPosition.toArray(),
+        heading: citySpawnHeading
+      });
+      finishLoadingScreen();
     } catch (error) {
       failCityMapLoad(error);
     }
   }, (event) => {
-    if (event.total) console.info('Loading Camellia City:', Math.round(event.loaded / event.total * 100) + '%');
+    if (event.total) {
+      console.info('Loading Manhattan GLB:', Math.round(event.loaded / event.total * 100) + '%');
+    }
   }, failCityMapLoad);
 }
 function createCityTrafficModel(fallbackColor,style=0) {
