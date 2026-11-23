@@ -2645,6 +2645,7 @@ let cityRespawnScreen = null;
 let cityRespawnTitleNode = null;
 let cityRespawnDetailNode = null;
 const cityGroundRaycaster = new THREE.Raycaster();
+const cityGroundNormalMatrix = new THREE.Matrix3();
 const cityCollisionRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
@@ -2887,16 +2888,34 @@ function cityGroundHeightAt(x, z) {
   cityGroundRaycaster.near = 0;
   cityGroundRaycaster.far = Math.max(20, cityGroundCeilingY - cityGroundFloorY + 20);
   const hits = cityGroundRaycaster.intersectObjects(meshes, false);
-  const normalMatrix = new THREE.Matrix3();
   for (const hit of hits) {
     if (!hit.face || hit.point.y < cityGroundFloorY - 0.5) continue;
-    normalMatrix.getNormalMatrix(hit.object.matrixWorld);
-    const normal = hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+    cityGroundNormalMatrix.getNormalMatrix(hit.object.matrixWorld);
+    const normal = hit.face.normal.clone().applyMatrix3(cityGroundNormalMatrix).normalize();
     if (normal.y < 0.88) continue;
     if (localWaterY!==null&&hit.point.y<=localWaterY+0.25)continue;
     return hit.point.y;
   }
   return null;
+}
+function cityGroundPathStatus(startX,startZ,endX,endZ,startGroundY,maxStep=1) {
+  const distance=Math.hypot(endX-startX,endZ-startZ);
+  const steps=Math.max(1,Math.ceil(distance/maxStep));
+  let previousY=startGroundY;
+  for(let step=1;step<=steps;step++) {
+    const fraction=step/steps;
+    const x=startX+(endX-startX)*fraction;
+    const z=startZ+(endZ-startZ)*fraction;
+    const groundY=cityGroundHeightAt(x,z);
+    if(groundY===null) {
+      return {supported:false,water:cityIsWaterAt(x,z,null),groundY};
+    }
+    if(Math.abs(groundY-previousY)>4) {
+      return {supported:false,water:false,groundY};
+    }
+    previousY=groundY;
+  }
+  return {supported:true,water:false,groundY:previousY};
 }
 function citySafeGroundY(x, z) {
   const surfaceY=cityGroundHeightAt(x,z);
@@ -2980,11 +2999,10 @@ function cityRoadHeightAt(candidate) {
   cityGroundRaycaster.far=Math.max(20,cityGroundCeilingY-cityGroundFloorY+20);
   const roadMeshes=citySurfaceMeshesAt(cityRoadMeshGrid,candidate.x,candidate.z);
   const hits=cityGroundRaycaster.intersectObjects(roadMeshes,false);
-  const normalMatrix=new THREE.Matrix3();
   for(const hit of hits) {
     if(!hit.face||hit.point.y<cityGroundFloorY-0.5)continue;
-    normalMatrix.getNormalMatrix(hit.object.matrixWorld);
-    const normal=hit.face.normal.clone().applyMatrix3(normalMatrix).normalize();
+    cityGroundNormalMatrix.getNormalMatrix(hit.object.matrixWorld);
+    const normal=hit.face.normal.clone().applyMatrix3(cityGroundNormalMatrix).normalize();
     if(normal.y<0.88)continue;
     if(waterY!==null&&hit.point.y<=waterY+0.25)continue;
     return hit.point.y;
@@ -2999,13 +3017,15 @@ function findCityRoadsideSpawn(root) {
   const roads=[...cityRoadCandidates].sort((a,b)=>Math.hypot(a.x,a.z)-Math.hypot(b.x,b.z));
   let best=null;
   for(const road of roads) {
-    const groundY=cityRoadHeightAt(road);
-    if(groundY===null||groundY<cityGroundFloorY-0.5||groundY>cityGroundCeilingY+0.5)continue;
-    if(cityPositionBlocked(road.x,road.z,groundY))continue;
+    const roadY=cityRoadHeightAt(road);
+    if(roadY===null||roadY<cityGroundFloorY-0.5||roadY>cityGroundCeilingY+0.5)continue;
+    const supportedY=cityGroundHeightAt(road.x,road.z);
+    if(supportedY===null||Math.abs(supportedY-roadY)>0.5)continue;
+    if(cityPositionBlocked(road.x,road.z,supportedY))continue;
     let bestPath=0,bestHeading=0;
     for(let direction=0;direction<8;direction++) {
       const heading=direction*Math.PI/4,dx=Math.sin(heading),dz=Math.cos(heading);
-      let previousY=groundY,previousX=road.x,previousZ=road.z,pathLength=0;
+      let previousY=supportedY,previousX=road.x,previousZ=road.z,pathLength=0;
       for(let distance=8;distance<=96;distance+=8) {
         const x=road.x+dx*distance,z=road.z+dz*distance;
         const y=cityRoadHeightAt({x,z,mesh:road.mesh});
@@ -3014,7 +3034,7 @@ function findCityRoadsideSpawn(root) {
       }
       if(pathLength>bestPath){bestPath=pathLength;bestHeading=heading;}
     }
-    if(bestPath>=(best?.pathLength||0))best={road,groundY,pathLength:bestPath,heading:bestHeading};
+    if(bestPath>=(best?.pathLength||0))best={road,groundY:supportedY,pathLength:bestPath,heading:bestHeading};
     if(bestPath>=80)break;
   }
   if(best&&best.pathLength>=64) {
@@ -3022,11 +3042,6 @@ function findCityRoadsideSpawn(root) {
     const spawn=new THREE.Vector3(best.road.x,best.groundY+0.12,best.road.z);
     console.info('Selected a clear paved city spawn:',spawn.toArray(),best.road.mesh.name,'clear path:',best.pathLength);
     return spawn;
-  }
-  if(best&&best.pathLength>=24) {
-    citySpawnHeading=best.heading;
-    console.warn('Only a short paved path was found for the city spawn:',best.pathLength);
-    return new THREE.Vector3(best.road.x,best.groundY+0.12,best.road.z);
   }
   console.warn('No safe spawn could be found on the imported road meshes.');
   return null;
@@ -3287,56 +3302,8 @@ function createOpenCityWorld() {
       // sampled ground triangles for both driving and respawn placement.
       buildCityCollisionGrid(cityRoot);
       let spawn = findCityRoadsideSpawn(cityRoot);
-      if (!spawn && cityRoadCandidates.length) {
-        // Last-resort spawn: choose a clear sampled ground triangle and a
-        // direction with the longest continuous stretch of ground.
-        let fallback = null;
-        for (const road of cityRoadCandidates) {
-          const y = cityRoadHeightAt(road);
-          if (y === null || cityPositionBlocked(road.x, road.z, y)) continue;
-          let bestLength = 0;
-          let bestHeading = 0;
-          for (let direction = 0; direction < 8; direction++) {
-            const heading = direction * Math.PI / 4;
-            let length = 0;
-            for (let distance = 8; distance <= 64; distance += 8) {
-              const x = road.x + Math.sin(heading) * distance;
-              const z = road.z + Math.cos(heading) * distance;
-              if (cityRoadHeightAt({ x, z, mesh: road.mesh }) === null) break;
-              length = distance;
-            }
-            if (length > bestLength) {
-              bestLength = length;
-              bestHeading = heading;
-            }
-          }
-          if (!fallback || bestLength > fallback.length) {
-            fallback = { road, y, length: bestLength, heading: bestHeading };
-          }
-        }
-        if (fallback && fallback.length >= 8) {
-          citySpawnHeading = fallback.heading;
-          spawn = new THREE.Vector3(fallback.road.x, fallback.y + 0.12, fallback.road.z);
-        }
-      }
-      if (!spawn && cityRoadCandidates.length) {
-        // Last-resort: use the exact height of a sampled upward-facing GLB triangle.
-        // The mesh bounding-box minimum may be below the actual road surface.
-        const candidates = cityRoadCandidates
-          .filter((candidate) => Number.isFinite(candidate.x) && Number.isFinite(candidate.z) &&
-            Number.isFinite(candidate.fallbackY) &&
-            candidate.fallbackY >= cityGroundFloorY - 0.5 &&
-            candidate.fallbackY <= cityGroundCeilingY + 0.5)
-          .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
-        if (candidates.length) {
-          const road = candidates[0];
-          citySpawnHeading = 0;
-          spawn = new THREE.Vector3(road.x, road.fallbackY + 0.35, road.z);
-          console.warn('Using exact GLB ground-triangle spawn fallback:', spawn.toArray());
-        }
-      }
       if (!spawn || !cityRoadCandidates.length) {
-        throw new Error('Could not find a usable ground spawn in the Manhattan GLB.');
+        throw new Error('Could not find a clear, supported spawn on a continuous Manhattan road.');
       }
 
       citySpawnPosition.copy(spawn);
@@ -3655,22 +3622,43 @@ function updateOpenCity(dt,stats) {
   const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
   cityHeading+=steer*1.35*speedFactor*Math.sign(citySpeedMps||1)*dt;
   cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
+  let oldGroundY=cityGroundHeightAt(player.position.x,player.position.z);
+  if(oldGroundY===null&&cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,null)) {
+    showWaterDeathScreen();
+    return;
+  }
+  if(oldGroundY===null) {
+    player.position.copy(citySpawnPosition);
+    oldGroundY=cityGroundHeightAt(citySpawnPosition.x,citySpawnPosition.z);
+    cityHeading=citySpawnHeading;
+    citySpeedMps=0;
+  }
   player.rotation.y=cityHeading;
   const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
   const oldPosition=player.position.clone();
   // Sample the imported city's ground triangles; the old artificial grid does
   // not match this model's streets.
-  const onRoad=cityGroundHeightAt(player.position.x,player.position.z)!==null;
+  const onRoad=oldGroundY!==null;
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
   const lateralSpeed=steer*citySpeedMps*0.12*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
-  // Water is lethal. Road samples above the local water line keep the car
-  // grounded; when no road exists over water, respawn at the saved road spawn.
-  let playerGroundY=cityGroundHeightAt(player.position.x,player.position.z);
-  if(cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,playerGroundY)){showWaterDeathScreen();return;}
+  // Check the swept path at short intervals. Unsupported gaps block movement
+  // instead of applying gravity, while water still triggers the recovery screen.
+  const groundPath=oldGroundY===null
+    ? {supported:false,water:false,groundY:null}
+    : cityGroundPathStatus(oldPosition.x,oldPosition.z,player.position.x,player.position.z,oldGroundY);
+  let playerGroundY=groundPath.groundY;
+  if(groundPath.water&&cityRespawnCooldown<=0){showWaterDeathScreen();return;}
+  if(!groundPath.supported) {
+    player.position.x=oldPosition.x;
+    player.position.z=oldPosition.z;
+    playerGroundY=oldGroundY;
+    citySpeedMps=0;
+    cityFallSpeed=0;
+  }
   // Cast against nearby triangles from the imported city tiles so streets stay
   // clear while building walls still block the player.
   if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12)) {
@@ -3678,17 +3666,11 @@ function updateOpenCity(dt,stats) {
     player.position.z = oldPosition.z;
     const impactSpeed=Math.abs(citySpeedMps);
     citySpeedMps *= -0.16;
-    playerGroundY=cityGroundHeightAt(oldPosition.x,oldPosition.z);
+    playerGroundY=oldGroundY;
     if(hitCooldown<=0){damagePlayer(impactSpeed>18?8:3);hitCooldown=0.4;cameraShake=Math.max(cameraShake,0.3);}
   }
-  if(playerGroundY===null) {
-    cityFallSpeed+=24*dt;
-    player.position.y=oldPosition.y-cityFallSpeed*dt;
-    if(cityRespawnCooldown<=0&&player.position.y<cityGroundFloorY-4){showCityFallScreen();return;}
-  } else {
-    cityFallSpeed=0;
-    player.position.y=playerGroundY+0.12;
-  }
+  cityFallSpeed=0;
+  player.position.y=playerGroundY===null?citySpawnPosition.y:playerGroundY+0.12;
   player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*0.09,4,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
   actualSpeed=Math.abs(citySpeedMps)*3.6;
@@ -4030,27 +4012,40 @@ function tryEnterNearbyCityCar() {
 }
 function updateCityOnFoot(dt) {
   if(!cityAvatar)return;
+  let oldFootGroundY=cityGroundHeightAt(cityAvatar.position.x,cityAvatar.position.z);
+  if(oldFootGroundY===null&&cityRespawnCooldown<=0&&cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,null)) {
+    showWaterDeathScreen();
+    return;
+  }
+  if(oldFootGroundY===null) {
+    cityAvatar.position.copy(citySpawnPosition);
+    cityAvatar.position.y-=0.12;
+    cityFootHeading=citySpawnHeading;
+    oldFootGroundY=cityGroundHeightAt(cityAvatar.position.x,cityAvatar.position.z);
+  }
   const oldAvatarPosition=cityAvatar.position.clone();
   const turn=(keys.left?1:0)-(keys.right?1:0);
   cityFootHeading+=turn*2.2*dt;
   const forward=(keys.accelerate?1:0)-(keys.brake?1:0);
   const direction=new THREE.Vector3(Math.sin(cityFootHeading),0,Math.cos(cityFootHeading));
   cityAvatar.position.addScaledVector(direction,forward*7*dt);
-  let footGroundY=cityGroundHeightAt(cityAvatar.position.x,cityAvatar.position.z);
-  if(cityRespawnCooldown<=0&&cityIsWaterAt(cityAvatar.position.x,cityAvatar.position.z,footGroundY)){showWaterDeathScreen();return;}
+  const groundPath=oldFootGroundY===null
+    ? {supported:false,water:false,groundY:null}
+    : cityGroundPathStatus(oldAvatarPosition.x,oldAvatarPosition.z,cityAvatar.position.x,cityAvatar.position.z,oldFootGroundY);
+  let footGroundY=groundPath.groundY;
+  if(groundPath.water&&cityRespawnCooldown<=0){showWaterDeathScreen();return;}
+  if(!groundPath.supported) {
+    cityAvatar.position.x=oldAvatarPosition.x;
+    cityAvatar.position.z=oldAvatarPosition.z;
+    footGroundY=oldFootGroundY;
+  }
   if(cityCollisionCount&&cityBuildingBlocksPath(oldAvatarPosition,cityAvatar.position,footGroundY??oldAvatarPosition.y)) {
     cityAvatar.position.x=oldAvatarPosition.x;
     cityAvatar.position.z=oldAvatarPosition.z;
-    footGroundY=cityGroundHeightAt(oldAvatarPosition.x,oldAvatarPosition.z);
+    footGroundY=oldFootGroundY;
   }
-  if(footGroundY===null) {
-    cityFootFallSpeed+=24*dt;
-    cityAvatar.position.y=oldAvatarPosition.y-cityFootFallSpeed*dt;
-    if(cityRespawnCooldown<=0&&cityAvatar.position.y<cityGroundFloorY-4){showCityFallScreen();return;}
-  } else {
-    cityFootFallSpeed=0;
-    cityAvatar.position.y=footGroundY;
-  }
+  cityFootFallSpeed=0;
+  cityAvatar.position.y=footGroundY===null?citySpawnPosition.y-0.12:footGroundY;
   cityAvatar.rotation.y=cityFootHeading;
   player.position.copy(cityAvatar.position);
   for(const bot of cityTraffic) {
