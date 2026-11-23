@@ -10,9 +10,9 @@ const dayColor = new THREE.Color(0x9bbdd0);
 const nightColor = new THREE.Color(0x071321);
 scene.background = dayColor;
 scene.fog = new THREE.Fog(dayColor, 55, 250);
-// Set camera far clipping plane to 400 (instead of 180 or 200)
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 260);
-// Match fog so distant cars fade in smoothly instead of popping
+// Clip at the fog limit so the renderer can skip city tiles hidden by distance.
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 220);
+// Match fog so distant cars fade in smoothly instead of popping.
 scene.fog = new THREE.Fog(0x0b1624, 95, 220);
 camera.position.set(0, 5.5, 15);
 camera.lookAt(0, 1, -22);
@@ -2635,6 +2635,8 @@ let cityRoadCandidates = [];
 let cityWaterGrid = new Map();
 let cityLargeWaterRegions = [];
 let cityWaterSurfaceMeshes = [];
+let cityCollisionSources = [];
+const cityCollisionRaycastMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
@@ -2646,11 +2648,21 @@ const cityGroundRaycaster = new THREE.Raycaster();
 const cityCollisionRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
+function setIndexedTileBounds(geometry, indices, position) {
+  const bounds = new THREE.Box3().makeEmpty();
+  const point = new THREE.Vector3();
+  for (const index of indices) bounds.expandByPoint(point.set(position.getX(index),position.getY(index),position.getZ(index)));
+  geometry.boundingBox = bounds;
+  geometry.boundingSphere = new THREE.Sphere();
+  bounds.getBoundingSphere(geometry.boundingSphere);
+}
 function splitManhattanRenderMeshes(root) {
   root.updateMatrixWorld(true);
   const replacements = [];
+  cityCollisionSources = [];
   let sourceMeshCount = 0;
   let chunkCount = 0;
+  let collisionTriangleCount = 0;
   const worldPoint = new THREE.Vector3();
 
   root.traverse((object) => {
@@ -2669,6 +2681,7 @@ function splitManhattanRenderMeshes(root) {
 
     sourceMeshCount++;
     const cells = new Map();
+    const collisionCells = new Map();
     for (const group of groups) {
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
       for (let i = group.start; i + 2 < end; i += 3) {
@@ -2687,6 +2700,27 @@ function splitManhattanRenderMeshes(root) {
         let indices = cell.groups.get(group.materialIndex || 0);
         if (!indices) cell.groups.set(group.materialIndex || 0, indices = []);
         indices.push(a,b,c);
+
+        // Keep only near-vertical faces for car walls. These smaller static
+        // tiles make collision rays much cheaper than testing rendered floors,
+        // roofs and whole 120 m visual chunks on every frame.
+        const abx = position.getX(b) - position.getX(a);
+        const aby = position.getY(b) - position.getY(a);
+        const abz = position.getZ(b) - position.getZ(a);
+        const acx = position.getX(c) - position.getX(a);
+        const acy = position.getY(c) - position.getY(a);
+        const acz = position.getZ(c) - position.getZ(a);
+        const normalX = aby * acz - abz * acy;
+        const normalY = abz * acx - abx * acz;
+        const normalZ = abx * acy - aby * acx;
+        const normalLengthSq = normalX*normalX + normalY*normalY + normalZ*normalZ;
+        if (normalLengthSq > 1e-10 && normalY*normalY <= normalLengthSq * 0.5184) {
+          const wallKey = Math.floor(worldPoint.x / CITY_COLLISION_CELL) + ',' + Math.floor(worldPoint.z / CITY_COLLISION_CELL);
+          let wall = collisionCells.get(wallKey);
+          if (!wall) collisionCells.set(wallKey, wall = []);
+          wall.push(a,b,c);
+          collisionTriangleCount++;
+        }
       }
     }
 
@@ -2702,8 +2736,7 @@ function splitManhattanRenderMeshes(root) {
         offset += indices.length;
       }
       chunkGeometry.setIndex(new THREE.BufferAttribute(chunkIndices,1));
-      chunkGeometry.computeBoundingBox();
-      chunkGeometry.computeBoundingSphere();
+      setIndexedTileBounds(chunkGeometry,chunkIndices,position);
 
       const chunk = object.clone(false);
       chunk.geometry = chunkGeometry;
@@ -2713,6 +2746,24 @@ function splitManhattanRenderMeshes(root) {
       replacements.push({parent:object.parent,source:object,chunk});
       chunkCount++;
     }
+
+    for (const [cell, indices] of collisionCells) {
+      const collisionGeometry = new THREE.BufferGeometry();
+      for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) collisionGeometry.setAttribute(name, attribute);
+      const collisionIndices = new Uint32Array(indices);
+      collisionGeometry.setIndex(new THREE.BufferAttribute(collisionIndices,1));
+      setIndexedTileBounds(collisionGeometry,collisionIndices,position);
+      const collider = object.clone(false);
+      collider.geometry = collisionGeometry;
+      collider.material = cityCollisionRaycastMaterial;
+      collider.name = (object.name || 'Manhattan_Mesh') + '_wall_' + cell;
+      collider.matrixAutoUpdate = false;
+      collider.matrixWorldAutoUpdate = false;
+      collider.matrix.copy(object.matrixWorld);
+      collider.matrixWorld.copy(object.matrixWorld);
+      collider.userData = {cityWallCollider:true};
+      cityCollisionSources.push(collider);
+    }
   });
 
   for (const {parent,source,chunk} of replacements) {
@@ -2720,7 +2771,10 @@ function splitManhattanRenderMeshes(root) {
     parent.remove(source);
   }
   root.updateMatrixWorld(true);
-  console.info('Split Manhattan city meshes into view-cullable tiles:', {sourceMeshCount,chunkCount,tileSize:CITY_RENDER_CHUNK_SIZE});
+  console.info('Split Manhattan city meshes into view-cullable tiles:', {
+    sourceMeshCount,chunkCount,tileSize:CITY_RENDER_CHUNK_SIZE,
+    wallColliderTiles:cityCollisionSources.length,wallTriangles:collisionTriangleCount
+  });
   return chunkCount;
 }
 function buildCityCollisionGrid(root) {
@@ -2761,15 +2815,18 @@ function buildCityCollisionGrid(root) {
       if (sample) cityRoadCandidates.push({x:sample.x,z:sample.z,fallbackY:sample.y,mesh:object});
       return;
     }
-    if (!object.userData.cityVisibleChunk) return;
+  });
+  for (const mesh of cityCollisionSources) {
+    bounds.setFromObject(mesh);
+    if (bounds.isEmpty()) continue;
     const collider = {
-      mesh:object,
+      mesh,
       minX:bounds.min.x-0.18,minY:bounds.min.y-0.18,minZ:bounds.min.z-0.18,
       maxX:bounds.max.x+0.18,maxY:bounds.max.y+0.18,maxZ:bounds.max.z+0.18
     };
     addBoundsToGrid(cityCollisionGrid,collider,bounds,CITY_COLLISION_CELL);
     cityCollisionCount++;
-  });
+  }
   console.info('Prepared Manhattan road samples and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
@@ -2998,12 +3055,17 @@ function nearestCityRoadCandidate(x, z, minDistance = 0, maxDistance = Infinity,
     const distance = Math.hypot(candidate.x - x, candidate.z - z);
     if (distance < minDistance || distance > maxDistance) continue;
     if (avoid.some((point) => Math.hypot(candidate.x-point.x,candidate.z-point.z)<12)) continue;
-    if (cityPositionBlocked(candidate.x,candidate.z,candidate.fallbackY)) continue;
     nearby.push({candidate,distance});
   }
   nearby.sort((a,b)=>a.distance-b.distance);
   const choiceCount=Math.min(10,nearby.length);
-  return choiceCount?nearby[Math.floor(Math.random()*choiceCount)].candidate:null;
+  if (!choiceCount) return null;
+  const firstChoice=Math.floor(Math.random()*choiceCount);
+  for (let offset=0;offset<choiceCount;offset++) {
+    const candidate=nearby[(firstChoice+offset)%choiceCount].candidate;
+    if(!cityPositionBlocked(candidate.x,candidate.z,candidate.fallbackY))return candidate;
+  }
+  return null;
 }
 function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
   const radius = 2.35;
@@ -3055,8 +3117,8 @@ function cityBuildingBlocksPath(start, end, groundY) {
   cityCollisionRaycaster.far = reach;
   const rayStartX = start.x - dirX*2.1;
   const rayStartZ = start.z - dirZ*2.1;
-  for (const side of [-1,0,1]) for (const height of [0.55,1.25,1.9]) {
-    cityCollisionRaycaster.ray.origin.set(rayStartX + sideX*side, groundY + height, rayStartZ + sideZ*side);
+  for (const side of [-0.85,0,0.85]) {
+    cityCollisionRaycaster.ray.origin.set(rayStartX + sideX*side, groundY + 1.0, rayStartZ + sideZ*side);
     cityCollisionRaycaster.ray.direction.set(dirX,0,dirZ);
     if (cityCollisionRaycaster.intersectObjects(meshes, false).some((hit) => hit.distance <= reach)) return true;
   }
@@ -3066,6 +3128,9 @@ function failCityMapLoad(error) {
   cityWorldLoading = false;
   cityWorldReady = false;
   cityMapLoadFailed = true;
+  cityCollisionSources = [];
+  cityCollisionGrid.clear();
+  cityCollisionCount = 0;
   if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
   cityRoot = null;
   console.error('Manhattan GLB could not be prepared:', error);
