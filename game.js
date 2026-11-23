@@ -2845,7 +2845,7 @@ function buildCityCollisionGrid(root, buildingColliderRoot = root) {
     const edgeAC = new THREE.Vector3();
     for (const group of groups) {
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end; i += 3) {
+      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
         const a = index ? index.getX(i) : i;
         const b = index ? index.getX(i + 1) : i + 1;
         const c = index ? index.getX(i + 2) : i + 2;
@@ -3340,6 +3340,9 @@ function createManhattanGroundSurfaces(map, mapBounds) {
   const height = Math.max(1, mapBounds.max.y - mapBounds.min.y);
   const groundBand = THREE.MathUtils.clamp(height * 0.12, 2, 32);
   const chunks = new Map();
+  // Keep the generated raycast layer bounded on large city exports.
+  const MAX_GROUND_TRIANGLES = 120000;
+  let generatedTriangles = 0;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
@@ -3349,6 +3352,7 @@ function createManhattanGroundSurfaces(map, mapBounds) {
   const center = new THREE.Vector3();
 
   map.traverse((object) => {
+    if (generatedTriangles >= MAX_GROUND_TRIANGLES) return;
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
     const geometry = object.geometry;
     const position = geometry.attributes.position;
@@ -3380,6 +3384,7 @@ function createManhattanGroundSurfaces(map, mapBounds) {
           b.x,b.y,b.z,
           c.x,c.y,c.z
         );
+        generatedTriangles++;
       }
     }
   });
@@ -3483,7 +3488,9 @@ function createOpenCityWorld() {
         throw new Error('No upward-facing ground triangles were found near the bottom of the Manhattan GLB.');
       }
 
-      buildCityCollisionGrid(cityRoot);
+      // Use the map's exported hull meshes for building collision instead of
+      // rebuilding triangle colliders from every visible building surface.
+      buildCityCollisionGrid(cityRoot, map);
       let spawn = findCityRoadsideSpawn(cityRoot);
       if (!spawn && cityRoadCandidates.length) {
         // Last-resort spawn: choose a clear sampled ground triangle and a
