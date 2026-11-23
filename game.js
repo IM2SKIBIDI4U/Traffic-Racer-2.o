@@ -3480,6 +3480,7 @@ function createOpenCityWorld() {
       map.updateMatrixWorld(true);
 
       const fastMaterialCache = new Map();
+      const cityTexturesToDispose = new Set();
       map.traverse((object) => {
         if (!object.isMesh) return;
         object.castShadow = false;
@@ -3494,23 +3495,24 @@ function createOpenCityWorld() {
             return fastMaterialCache.get('fallback');
           }
           if (!fastMaterialCache.has(mat.uuid)) {
+            // Keep the city readable with material/vertex colours, but release
+            // large GLB texture maps that can exhaust integrated Chromebook GPUs.
+            for (const key of ['map','alphaMap','normalMap','roughnessMap','metalnessMap','emissiveMap','aoMap','lightMap','bumpMap','displacementMap']) {
+              if (mat[key]?.isTexture) cityTexturesToDispose.add(mat[key]);
+            }
             fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
               name: mat.name,
-              map: mat.map || null,
-              alphaMap: mat.alphaMap || null,
-              color: mat.color ? mat.color.clone() : 0xffffff,
+              color: mat.color ? mat.color.clone() : 0xcccccc,
               vertexColors: !!mat.vertexColors,
-              transparent: !!mat.transparent,
-              opacity: Number.isFinite(mat.opacity) ? mat.opacity : 1,
-              alphaTest: mat.alphaTest || 0,
-              side: THREE.DoubleSide,
-              depthWrite: mat.depthWrite !== false
+              side: THREE.DoubleSide
             }));
           }
           return fastMaterialCache.get(mat.uuid);
         });
         object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
       });
+      for (const texture of cityTexturesToDispose) texture.dispose();
+      console.info('Released GLB texture maps for low-memory city rendering:', cityTexturesToDispose.size);
 
       cityRoot.add(map);
       cityRoot.updateMatrixWorld(true);
