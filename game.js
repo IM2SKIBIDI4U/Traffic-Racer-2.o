@@ -3493,7 +3493,7 @@ function createOpenCityWorld() {
         throw new Error('No upward-facing ground triangles were found near the bottom of the Manhattan GLB.');
       }
 
-      buildCityCollisionGrid(cityRoot, map);
+      buildCityCollisionGrid(cityRoot);
       let spawn = findCityRoadsideSpawn(cityRoot);
       if (!spawn && cityRoadCandidates.length) {
         // Last-resort spawn: choose a clear sampled ground triangle and a
