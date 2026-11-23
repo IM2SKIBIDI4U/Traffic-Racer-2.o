@@ -3365,7 +3365,7 @@ function createManhattanGroundSurfaces(map, mapBounds) {
   const groundBand = THREE.MathUtils.clamp(height * 0.12, 2, 32);
   const chunks = new Map();
   // Keep the generated raycast layer bounded on large city exports.
-  const MAX_GROUND_TRIANGLES = 30000;
+  const MAX_GROUND_TRIANGLES = 120000;
   let generatedTriangles = 0;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
@@ -3384,10 +3384,14 @@ function createManhattanGroundSurfaces(map, mapBounds) {
     const groups = geometry.groups.length
       ? geometry.groups
       : [{ start: 0, count: index ? index.count : position.count }];
+    // Sample across each mesh instead of taking only its first triangles. This
+    // spreads the invisible ground collision layer over the whole city.
+    const meshTriangleCount = groups.reduce((sum, group) => sum + Math.floor(group.count / 3), 0);
+    const sampleStride = Math.max(1, Math.ceil(meshTriangleCount / 4000));
     for (const group of groups) {
       if (generatedTriangles >= MAX_GROUND_TRIANGLES) break;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
+      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3 * sampleStride) {
         const ia = index ? index.getX(i) : i;
         const ib = index ? index.getX(i + 1) : i + 1;
         const ic = index ? index.getX(i + 2) : i + 2;
@@ -3479,40 +3483,14 @@ function createOpenCityWorld() {
       map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
       map.updateMatrixWorld(true);
 
-      const fastMaterialCache = new Map();
-      const cityTexturesToDispose = new Set();
+      // Preserve the GLB's original materials and texture maps. Replacing them
+      // with untextured basic materials made the entire city appear white.
       map.traverse((object) => {
         if (!object.isMesh) return;
         object.castShadow = false;
         object.receiveShadow = false;
         object.frustumCulled = true;
-        const sourceMaterials = Array.isArray(object.material) ? object.material : [object.material];
-        const fastMaterials = sourceMaterials.map((mat) => {
-          if (!mat) {
-            if (!fastMaterialCache.has('fallback')) {
-              fastMaterialCache.set('fallback', new THREE.MeshBasicMaterial({ color: 0xcccccc }));
-            }
-            return fastMaterialCache.get('fallback');
-          }
-          if (!fastMaterialCache.has(mat.uuid)) {
-            // Keep the city readable with material/vertex colours, but release
-            // large GLB texture maps that can exhaust integrated Chromebook GPUs.
-            for (const key of ['map','alphaMap','normalMap','roughnessMap','metalnessMap','emissiveMap','aoMap','lightMap','bumpMap','displacementMap']) {
-              if (mat[key]?.isTexture) cityTexturesToDispose.add(mat[key]);
-            }
-            fastMaterialCache.set(mat.uuid, new THREE.MeshBasicMaterial({
-              name: mat.name,
-              color: mat.color ? mat.color.clone() : 0xcccccc,
-              vertexColors: !!mat.vertexColors,
-              side: THREE.DoubleSide
-            }));
-          }
-          return fastMaterialCache.get(mat.uuid);
-        });
-        object.material = Array.isArray(object.material) ? fastMaterials : fastMaterials[0];
       });
-      for (const texture of cityTexturesToDispose) texture.dispose();
-      console.info('Released GLB texture maps for low-memory city rendering:', cityTexturesToDispose.size);
 
       cityRoot.add(map);
       cityRoot.updateMatrixWorld(true);
