@@ -3412,16 +3412,6 @@ function createManhattanGroundSurfaces(map, mapBounds) {
   return triangleCount;
 }
 
-function failCityMapLoad(error) {
-  cityWorldLoading = false;
-  cityWorldReady = false;
-  cityMapLoadFailed = true;
-  if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
-  cityRoot = null;
-  console.error('Manhattan GLB could not be prepared:', error);
-  finishLoadingScreen();
-}
-
 function createOpenCityWorld() {
   if (cityWorldReady || cityWorldLoading) return;
   cityWorldLoading = true;
