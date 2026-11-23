@@ -2716,13 +2716,14 @@ function buildCityCollisionGrid(root, buildingColliderRoot = root, lightweight =
       const sample = object.userData.cityRoadCandidate;
       const x = sample ? sample.x : (worldBox.min.x + worldBox.max.x) * 0.5;
       const z = sample ? sample.z : (worldBox.min.z + worldBox.max.z) * 0.5;
+      const sampledY = sample ? sample.y : worldBox.min.y;
       const cellX = Math.floor(x / CITY_GROUND_CELL);
       const cellZ = Math.floor(z / CITY_GROUND_CELL);
       const roadKey = cellX + ',' + cellZ;
       const roadBucket = cityRoadMeshGrid.get(roadKey) || [];
       roadBucket.push(object);
       cityRoadMeshGrid.set(roadKey, roadBucket);
-      cityRoadCandidates.push({ x, z, fallbackY: worldBox.min.y, mesh: object });
+      cityRoadCandidates.push({ x, z, fallbackY: sampledY, mesh: object });
     });
     console.warn('Using lightweight Manhattan collision mode; detailed building hitboxes are disabled.');
     return;
@@ -3552,6 +3553,22 @@ function createOpenCityWorld() {
         if (fallback && fallback.length >= 8) {
           citySpawnHeading = fallback.heading;
           spawn = new THREE.Vector3(fallback.road.x, fallback.y + 0.12, fallback.road.z);
+        }
+      }
+      if (!spawn && cityRoadCandidates.length) {
+        // Last-resort: use the exact height of a sampled upward-facing GLB triangle.
+        // The mesh bounding-box minimum may be below the actual road surface.
+        const candidates = cityRoadCandidates
+          .filter((candidate) => Number.isFinite(candidate.x) && Number.isFinite(candidate.z) &&
+            Number.isFinite(candidate.fallbackY) &&
+            candidate.fallbackY >= cityGroundFloorY - 0.5 &&
+            candidate.fallbackY <= cityGroundCeilingY + 0.5)
+          .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+        if (candidates.length) {
+          const road = candidates[0];
+          citySpawnHeading = 0;
+          spawn = new THREE.Vector3(road.x, road.fallbackY + 0.35, road.z);
+          console.warn('Using exact GLB ground-triangle spawn fallback:', spawn.toArray());
         }
       }
       if (!spawn || !cityRoadCandidates.length) {
