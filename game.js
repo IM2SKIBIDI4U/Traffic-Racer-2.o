@@ -2713,8 +2713,9 @@ function buildCityCollisionGrid(root, buildingColliderRoot = root, lightweight =
       const box = object.geometry.boundingBox;
       if (!box) return;
       const worldBox = box.clone().applyMatrix4(object.matrixWorld);
-      const x = (worldBox.min.x + worldBox.max.x) * 0.5;
-      const z = (worldBox.min.z + worldBox.max.z) * 0.5;
+      const sample = object.userData.cityRoadCandidate;
+      const x = sample ? sample.x : (worldBox.min.x + worldBox.max.x) * 0.5;
+      const z = sample ? sample.z : (worldBox.min.z + worldBox.max.z) * 0.5;
       const cellX = Math.floor(x / CITY_GROUND_CELL);
       const cellZ = Math.floor(z / CITY_GROUND_CELL);
       const roadKey = cellX + ',' + cellZ;
@@ -3427,6 +3428,13 @@ function createManhattanGroundSurfaces(map, mapBounds) {
     }));
     surface.name = 'Manhattan_Road_Ground_' + cell;
     surface.userData.cityRoadSurface = true;
+    // Use the first sampled triangle's centroid so the spawn candidate is
+    // guaranteed to lie on this generated ground mesh.
+    surface.userData.cityRoadCandidate = {
+      x: (vertices[0] + vertices[3] + vertices[6]) / 3,
+      y: (vertices[1] + vertices[4] + vertices[7]) / 3,
+      z: (vertices[2] + vertices[5] + vertices[8]) / 3
+    };
     surface.matrixAutoUpdate = false;
     surface.matrix.identity();
     surface.matrixWorld.identity();
