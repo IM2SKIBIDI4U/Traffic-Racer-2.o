@@ -2688,7 +2688,7 @@ function splitCamelliaRoadAndWaterSurfaces(root) {
   });
   for (const {parent,surface} of surfacesToAttach) parent.add(surface);
 }
-function buildCityCollisionGrid(root) {
+function buildCityCollisionGrid(root, buildingColliderRoot = root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
   cityCollisionMeshes = [];
@@ -2956,7 +2956,7 @@ function buildCityCollisionGrid(root) {
         }
       }
     }
-    if (namedWater || terrainSurface || size.y <= 1.25 || size.x < 0.8 || size.z < 0.8 || object.userData.cityIgnoreGroundSampler) return;
+    if (buildingColliderRoot !== root || namedWater || terrainSurface || size.y <= 1.25 || size.x < 0.8 || size.z < 0.8 || object.userData.cityIgnoreGroundSampler) return;
 
     // Spatially chunk actual vertical facade triangles. Flat road and roof
     // faces never become car blockers, and collision rays test only nearby walls.
@@ -2970,6 +2970,28 @@ function buildCityCollisionGrid(root) {
       cityCollisionCount++;
     }
   });
+  if (buildingColliderRoot !== root) {
+    buildingColliderRoot.updateMatrixWorld(true);
+    buildingColliderRoot.traverse((object) => {
+      if (!object.isMesh || !object.geometry || !/_hull_00$/i.test(object.name || '')) return;
+      // Mesh1 is the full-map base hull, not a building. Its outer faces would
+      // recreate a hidden perimeter, so keep roads and map edges out of the wall grid.
+      if ((object.name || '').toLowerCase() === 'mesh1_hull_00') return;
+      bounds.setFromObject(object);
+      if (bounds.isEmpty()) return;
+      bounds.getSize(size);
+      if (size.y <= 1.25 || size.x < 0.8 || size.z < 0.8) return;
+      for (const collider of makeBuildingCollisionChunks(object)) {
+        cityCollisionMeshes.push(collider);
+        const minCellX = Math.floor(collider.minX / CITY_COLLISION_CELL);
+        const maxCellX = Math.floor(collider.maxX / CITY_COLLISION_CELL);
+        const minCellZ = Math.floor(collider.minZ / CITY_COLLISION_CELL);
+        const maxCellZ = Math.floor(collider.maxZ / CITY_COLLISION_CELL);
+        for (let x = minCellX; x <= maxCellX; x++) for (let z = minCellZ; z <= maxCellZ; z++) addCell(cityCollisionGrid, x + ',' + z, collider);
+        cityCollisionCount++;
+      }
+    });
+  }
   console.info('Generated Camellia road chunks, ground surfaces, and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityLargeGroundMeshes.length, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
@@ -3368,27 +3390,44 @@ function createOpenCityWorld() {
     splitCamelliaRoadAndWaterSurfaces(map);
     cityRoot.add(map);
     cityRoot.updateMatrixWorld(true);
-    buildCityCollisionGrid(map);
-    const spawn = findCityRoadsideSpawn(map);
-    if (!spawn || !cityRoadCandidates.length) throw new Error('No clear spawn could be found on the imported asphalt roads.');
-    citySpawnPosition.copy(spawn);
-    cityWorldReady = true;
-    cityWorldLoading = false;
-    cityMapLoadFinished = true;
-    cityMapLoadFailed = false;
-    if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
-    if (running && player) {
-      player.position.copy(citySpawnPosition);
-      player.rotation.set(0, citySpawnHeading, 0);
-      cityHeading = citySpawnHeading;
-      citySpeedMps = 0;
-    }
-    console.info('Loaded Camellia City and selected a spawn on its asphalt streets.', {
-      size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount,
-      roadMeshes: cityRoadCandidates.length, waterMeshes: cityWaterSurfaceMeshes.length,
-      spawn: citySpawnPosition.toArray(), heading: citySpawnHeading
+    const finishCityMapSetup = (collisionRoot) => {
+      try {
+        if (collisionRoot) {
+          collisionRoot.scale.setScalar(mapScale);
+          collisionRoot.position.copy(map.position);
+          collisionRoot.updateMatrixWorld(true);
+        }
+        buildCityCollisionGrid(map, collisionRoot || map);
+        const spawn = findCityRoadsideSpawn(map);
+        if (!spawn || !cityRoadCandidates.length) throw new Error('No clear spawn could be found on the imported asphalt roads.');
+        citySpawnPosition.copy(spawn);
+        cityWorldReady = true;
+        cityWorldLoading = false;
+        cityMapLoadFinished = true;
+        cityMapLoadFailed = false;
+        if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
+        if (running && player) {
+          player.position.copy(citySpawnPosition);
+          player.rotation.set(0, citySpawnHeading, 0);
+          cityHeading = citySpawnHeading;
+          citySpeedMps = 0;
+        }
+        console.info('Loaded Camellia City and selected a spawn on its asphalt streets.', {
+          size: size.toArray(), scale: mapScale, hitboxes: cityCollisionCount,
+          roadMeshes: cityRoadCandidates.length, waterMeshes: cityWaterSurfaceMeshes.length,
+          collisionFBX: !!collisionRoot, spawn: citySpawnPosition.toArray(), heading: citySpawnHeading
+        });
+        finishLoadingScreen();
+      } catch (error) {
+        failCityMapLoad(error);
+      }
+    };
+    cityLoader.load('./assets/camellia-city/Camellia_City_collision.fbx', finishCityMapSetup, (event) => {
+      if (event.total) console.info('Loading Camellia building hitboxes:', Math.round(event.loaded / event.total * 100) + '%');
+    }, (error) => {
+      console.warn('Could not load Camellia collision FBX; using wall geometry from the city model:', error);
+      finishCityMapSetup(null);
     });
-    finishLoadingScreen();
     } catch (error) {
       failCityMapLoad(error);
     }
