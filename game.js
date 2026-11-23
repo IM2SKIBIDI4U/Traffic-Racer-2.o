@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
@@ -467,7 +468,7 @@ function finishLoadingScreen() {
         cityMapRetryButton.addEventListener('click', () => {
           cityMapRetryButton.style.display = 'none';
           cityMapLoadFailed = false;
-          $('loading-message').textContent = 'Loading Manhattan city map…';
+          $('loading-message').textContent = 'Loading Camellia city streets…';
           if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
           cityRoot = null;
           createOpenCityWorld();
@@ -2625,18 +2626,14 @@ function updateTraffic(dt, previousPlayer) {
 // Road, sidewalk and roof faces are omitted so they cannot create phantom borders.
 const CITY_COLLISION_CELL = 24;
 const CITY_GROUND_CELL = CITY_COLLISION_CELL;
-const CITY_RENDER_CHUNK_SIZE = 120;
 let cityCollisionGrid = new Map();
 let cityCollisionCount = 0;
 let cityGroundGrid = new Map();
 let cityRoadMeshGrid = new Map();
 let cityWaterMeshGrid = new Map();
 let cityRoadCandidates = [];
-let cityWaterGrid = new Map();
-let cityLargeWaterRegions = [];
 let cityWaterSurfaceMeshes = [];
 let cityCollisionSources = [];
-const cityCollisionRaycastMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
@@ -2649,140 +2646,128 @@ const cityGroundNormalMatrix = new THREE.Matrix3();
 const cityCollisionRaycaster = new THREE.Raycaster();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
-function setIndexedTileBounds(geometry, indices, position) {
-  const bounds = new THREE.Box3().makeEmpty();
-  const point = new THREE.Vector3();
-  for (const index of indices) bounds.expandByPoint(point.set(position.getX(index),position.getY(index),position.getZ(index)));
-  geometry.boundingBox = bounds;
-  geometry.boundingSphere = new THREE.Sphere();
-  bounds.getBoundingSphere(geometry.boundingSphere);
+function makeWorldTriangleMesh(vertices, name, material, userData = {}) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  geometry.computeBoundingBox();
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = name;
+  mesh.userData = userData;
+  return mesh;
 }
-function splitManhattanRenderMeshes(root) {
+function createCamelliaRoadWaterSurfaces(root) {
   root.updateMatrixWorld(true);
-  const replacements = [];
-  cityCollisionSources = [];
-  let sourceMeshCount = 0;
-  let chunkCount = 0;
-  let collisionTriangleCount = 0;
-  const worldPoint = new THREE.Vector3();
+  const chunks = {road:new Map(),water:new Map()};
+  const roadMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
+  const waterMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
+  let roadTriangles = 0, waterTriangles = 0;
 
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
-    const sourceGeometry = object.geometry;
-    const position = sourceGeometry.attributes.position;
-    const index = sourceGeometry.index;
-    const groups = sourceGeometry.groups.length
-      ? sourceGeometry.groups
+    const geometry = object.geometry;
+    const position = geometry.attributes.position;
+    const index = geometry.index;
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    const groups = geometry.groups.length
+      ? geometry.groups
       : [{start:0,count:index ? index.count : position.count,materialIndex:0}];
-    const triangleCount = groups.reduce((sum, group) => sum + Math.floor(group.count / 3), 0);
-    if (triangleCount < 2000) {
-      object.userData.cityVisibleChunk = true;
-      return;
-    }
-
-    sourceMeshCount++;
-    const cells = new Map();
-    const collisionCells = new Map();
     for (const group of groups) {
+      const materialName = materials[group.materialIndex]?.name;
+      const kind = materialName === '_Gray6_2' ? 'road' : (materialName === '_4' || materialName === '_24' ? 'water' : null);
+      if (!kind) continue;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
       for (let i = group.start; i + 2 < end; i += 3) {
-        const a = index ? index.getX(i) : i;
-        const b = index ? index.getX(i + 1) : i + 1;
-        const c = index ? index.getX(i + 2) : i + 2;
-        const x = (position.getX(a) + position.getX(b) + position.getX(c)) / 3;
-        const y = (position.getY(a) + position.getY(b) + position.getY(c)) / 3;
-        const z = (position.getZ(a) + position.getZ(b) + position.getZ(c)) / 3;
-        worldPoint.set(x,y,z).applyMatrix4(object.matrixWorld);
-        const cellX = Math.floor(worldPoint.x / CITY_RENDER_CHUNK_SIZE);
-        const cellZ = Math.floor(worldPoint.z / CITY_RENDER_CHUNK_SIZE);
-        const key = cellX + ',' + cellZ;
-        let cell = cells.get(key);
-        if (!cell) cells.set(key, cell = {cellX,cellZ,groups:new Map()});
-        let indices = cell.groups.get(group.materialIndex || 0);
-        if (!indices) cell.groups.set(group.materialIndex || 0, indices = []);
-        indices.push(a,b,c);
-
-        // Keep only near-vertical faces for car walls. These smaller static
-        // tiles make collision rays much cheaper than testing rendered floors,
-        // roofs and whole 120 m visual chunks on every frame.
-        const abx = position.getX(b) - position.getX(a);
-        const aby = position.getY(b) - position.getY(a);
-        const abz = position.getZ(b) - position.getZ(a);
-        const acx = position.getX(c) - position.getX(a);
-        const acy = position.getY(c) - position.getY(a);
-        const acz = position.getZ(c) - position.getZ(a);
-        const normalX = aby * acz - abz * acy;
-        const normalY = abz * acx - abx * acz;
-        const normalZ = abx * acy - aby * acx;
-        const normalLengthSq = normalX*normalX + normalY*normalY + normalZ*normalZ;
-        if (normalLengthSq > 1e-10 && normalY*normalY <= normalLengthSq * 0.5184) {
-          const wallKey = Math.floor(worldPoint.x / CITY_COLLISION_CELL) + ',' + Math.floor(worldPoint.z / CITY_COLLISION_CELL);
-          let wall = collisionCells.get(wallKey);
-          if (!wall) collisionCells.set(wallKey, wall = []);
-          wall.push(a,b,c);
-          collisionTriangleCount++;
+        const ia = index ? index.getX(i) : i;
+        const ib = index ? index.getX(i + 1) : i + 1;
+        const ic = index ? index.getX(i + 2) : i + 2;
+        a.fromBufferAttribute(position, ia).applyMatrix4(object.matrixWorld);
+        b.fromBufferAttribute(position, ib).applyMatrix4(object.matrixWorld);
+        c.fromBufferAttribute(position, ic).applyMatrix4(object.matrixWorld);
+        if (kind === 'road') {
+          edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
+          if (normal.y < 0.88) continue;
         }
+        const centerX = (a.x+b.x+c.x)/3, centerY = (a.y+b.y+c.y)/3, centerZ = (a.z+b.z+c.z)/3;
+        const cellX = Math.floor(centerX/CITY_GROUND_CELL), cellZ = Math.floor(centerZ/CITY_GROUND_CELL);
+        const key = cellX + ',' + cellZ;
+        let chunk = chunks[kind].get(key);
+        if (!chunk) chunks[kind].set(key,chunk={vertices:[],first:null,triangles:0});
+        if (!chunk.first) chunk.first={x:centerX,y:centerY,z:centerZ};
+        chunk.vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
+        chunk.triangles++;
+        if (kind === 'road') roadTriangles++; else waterTriangles++;
       }
-    }
-
-    for (const cell of cells.values()) {
-      const indexCount = [...cell.groups.values()].reduce((sum, indices) => sum + indices.length, 0);
-      const chunkGeometry = new THREE.BufferGeometry();
-      for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) chunkGeometry.setAttribute(name, attribute);
-      const chunkIndices = new Uint32Array(indexCount);
-      let offset = 0;
-      for (const [materialIndex, indices] of cell.groups) {
-        chunkIndices.set(indices, offset);
-        chunkGeometry.addGroup(offset,indices.length,materialIndex);
-        offset += indices.length;
-      }
-      chunkGeometry.setIndex(new THREE.BufferAttribute(chunkIndices,1));
-      setIndexedTileBounds(chunkGeometry,chunkIndices,position);
-
-      const chunk = object.clone(false);
-      chunk.geometry = chunkGeometry;
-      chunk.name = (object.name || 'Manhattan_Mesh') + '_tile_' + cell.cellX + '_' + cell.cellZ;
-      chunk.userData = {...(object.userData || {}),cityVisibleChunk:true};
-      chunk.frustumCulled = true;
-      replacements.push({parent:object.parent,source:object,chunk});
-      chunkCount++;
-    }
-
-    for (const [cell, indices] of collisionCells) {
-      const collisionGeometry = new THREE.BufferGeometry();
-      for (const [name, attribute] of Object.entries(sourceGeometry.attributes)) collisionGeometry.setAttribute(name, attribute);
-      const collisionIndices = new Uint32Array(indices);
-      collisionGeometry.setIndex(new THREE.BufferAttribute(collisionIndices,1));
-      setIndexedTileBounds(collisionGeometry,collisionIndices,position);
-      const collider = object.clone(false);
-      collider.geometry = collisionGeometry;
-      collider.material = cityCollisionRaycastMaterial;
-      collider.name = (object.name || 'Manhattan_Mesh') + '_wall_' + cell;
-      collider.matrixAutoUpdate = false;
-      collider.matrixWorldAutoUpdate = false;
-      collider.matrix.copy(object.matrixWorld);
-      collider.matrixWorld.copy(object.matrixWorld);
-      collider.userData = {cityWallCollider:true};
-      cityCollisionSources.push(collider);
     }
   });
 
-  for (const {parent,source,chunk} of replacements) {
-    parent.add(chunk);
-    parent.remove(source);
+  let roadChunks = 0, waterChunks = 0;
+  for (const [key,chunk] of chunks.road) {
+    const mesh = makeWorldTriangleMesh(chunk.vertices,'Camellia_Road_'+key,roadMaterial,{
+      cityRoadSurface:true,cityRoadCandidate:chunk.first
+    });
+    cityRoot.add(mesh); roadChunks++;
   }
-  root.updateMatrixWorld(true);
-  console.info('Split Manhattan city meshes into view-cullable tiles:', {
-    sourceMeshCount,chunkCount,tileSize:CITY_RENDER_CHUNK_SIZE,
-    wallColliderTiles:cityCollisionSources.length,wallTriangles:collisionTriangleCount
+  for (const [key,chunk] of chunks.water) {
+    const mesh = makeWorldTriangleMesh(chunk.vertices,'Camellia_Water_'+key,waterMaterial,{cityWaterSurface:true});
+    cityRoot.add(mesh); waterChunks++;
+  }
+  console.info('Prepared named Camellia road and water surfaces:',{roadTriangles,roadChunks,waterTriangles,waterChunks});
+  return {roadTriangles,roadChunks,waterTriangles,waterChunks};
+}
+function createCamelliaCollisionSources(collisionRoot, scale, position) {
+  collisionRoot.scale.setScalar(scale);
+  collisionRoot.position.copy(position);
+  collisionRoot.updateMatrixWorld(true);
+  const chunks = new Map();
+  const hullBounds = new THREE.Box3(), hullSize = new THREE.Vector3();
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
+  const material = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
+  let hullCount = 0, wallTriangles = 0;
+
+  collisionRoot.traverse((object) => {
+    if (!object.isMesh || !object.geometry?.attributes?.position || !/_hull_00$/i.test(object.name||'')) return;
+    if ((object.name||'').toLowerCase() === 'mesh1_hull_00') return;
+    hullBounds.setFromObject(object);
+    if (hullBounds.isEmpty()) return;
+    hullBounds.getSize(hullSize);
+    if (hullSize.x < 0.8 || hullSize.z < 0.8 || hullSize.y <= 1.25 || hullSize.x > 160 || hullSize.z > 160 || hullSize.y > 240) return;
+    hullCount++;
+    const geometry = object.geometry, positionAttribute = geometry.attributes.position, index = geometry.index;
+    const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count}];
+    for (const group of groups) {
+      const end = Math.min(group.start+group.count,index ? index.count : positionAttribute.count);
+      for (let i=group.start;i+2<end;i+=3) {
+        const ia=index?index.getX(i):i, ib=index?index.getX(i+1):i+1, ic=index?index.getX(i+2):i+2;
+        a.fromBufferAttribute(positionAttribute,ia).applyMatrix4(object.matrixWorld);
+        b.fromBufferAttribute(positionAttribute,ib).applyMatrix4(object.matrixWorld);
+        c.fromBufferAttribute(positionAttribute,ic).applyMatrix4(object.matrixWorld);
+        edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
+        if (Math.abs(normal.y) > 0.72) continue;
+        const centerX=(a.x+b.x+c.x)/3,centerZ=(a.z+b.z+c.z)/3;
+        const key=Math.floor(centerX/CITY_COLLISION_CELL)+','+Math.floor(centerZ/CITY_COLLISION_CELL);
+        let vertices=chunks.get(key); if(!vertices)chunks.set(key,vertices=[]);
+        vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
+        wallTriangles++;
+      }
+    }
   });
-  return chunkCount;
+
+  cityCollisionSources = [...chunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'Camellia_Building_Walls_'+key,material,{cityWallCollider:true}));
+  if (!hullCount || !wallTriangles) throw new Error('Camellia collision FBX contains no usable building wall hulls.');
+  console.info('Prepared dedicated Camellia building hitboxes:',{hullCount,wallColliderCells:cityCollisionSources.length,wallTriangles});
+  return {hullCount,wallTriangles};
 }
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
   cityGroundGrid.clear();
   cityRoadMeshGrid.clear();
+  cityWaterMeshGrid.clear();
+  cityWaterSurfaceMeshes = [];
   cityRoadCandidates = [];
   root.updateMatrixWorld(true);
   const worldBounds = new THREE.Box3().setFromObject(root);
@@ -2816,6 +2801,10 @@ function buildCityCollisionGrid(root) {
       if (sample) cityRoadCandidates.push({x:sample.x,z:sample.z,fallbackY:sample.y,mesh:object});
       return;
     }
+    if (object.userData.cityWaterSurface) {
+      cityWaterSurfaceMeshes.push(object);
+      addBoundsToGrid(cityWaterMeshGrid,object,bounds,CITY_GROUND_CELL);
+    }
   });
   for (const mesh of cityCollisionSources) {
     bounds.setFromObject(mesh);
@@ -2828,7 +2817,7 @@ function buildCityCollisionGrid(root) {
     addBoundsToGrid(cityCollisionGrid,collider,bounds,CITY_COLLISION_CELL);
     cityCollisionCount++;
   }
-  console.info('Prepared Manhattan road samples and mesh hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityCollisionCount);
+  console.info('Prepared city road samples, water surfaces and building hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityWaterSurfaceMeshes.length, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
   const candidates = new Set();
@@ -2850,29 +2839,17 @@ function citySurfaceMeshesAt(grid, x, z) {
   }
   return [...candidates];
 }
-function cityWaterRegionsAt(x,z) {
-  const regions=new Set(cityLargeWaterRegions);
-  const cellX=Math.floor(x/CITY_GROUND_CELL),cellZ=Math.floor(z/CITY_GROUND_CELL);
-  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++) {
-    for(const region of cityWaterGrid.get((cellX+ox)+','+(cellZ+oz))||[])regions.add(region);
-  }
-  return [...regions].filter(region=>x>=region.minX&&x<=region.maxX&&z>=region.minZ&&z<=region.maxZ);
-}
 function cityWaterHeightAt(x,z) {
-  if (cityWaterSurfaceMeshes.length) {
-    cityGroundRaycaster.ray.origin.set(x, cityGroundCeilingY + 10, z);
-    cityGroundRaycaster.ray.direction.set(0, -1, 0);
-    cityGroundRaycaster.near = 0;
-    cityGroundRaycaster.far = Math.max(20, cityGroundCeilingY - cityGroundFloorY + 20);
-    let waterY = null;
-    for (const hit of cityGroundRaycaster.intersectObjects(citySurfaceMeshesAt(cityWaterMeshGrid,x,z), false)) {
-      if (!hit.face) continue;
-      if (waterY === null || hit.point.y > waterY) waterY = hit.point.y;
-    }
-    return waterY;
+  if (!cityWaterSurfaceMeshes.length) return null;
+  cityGroundRaycaster.ray.origin.set(x, cityGroundCeilingY + 10, z);
+  cityGroundRaycaster.ray.direction.set(0, -1, 0);
+  cityGroundRaycaster.near = 0;
+  cityGroundRaycaster.far = Math.max(20, cityGroundCeilingY - cityGroundFloorY + 20);
+  let waterY = null;
+  for (const hit of cityGroundRaycaster.intersectObjects(citySurfaceMeshesAt(cityWaterMeshGrid,x,z), false)) {
+    if (!hit.face) continue;
+    if (waterY === null || hit.point.y > waterY) waterY = hit.point.y;
   }
-  let waterY=null;
-  for(const region of cityWaterRegionsAt(x,z))waterY=waterY===null?region.waterY:Math.max(waterY,region.waterY);
   return waterY;
 }
 function cityIsWaterAt(x,z,groundY) {
@@ -3143,194 +3120,113 @@ function failCityMapLoad(error) {
   cityCollisionSources = [];
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
+  cityGroundGrid.clear();
+  cityRoadMeshGrid.clear();
+  cityWaterMeshGrid.clear();
+  cityRoadCandidates = [];
+  cityWaterSurfaceMeshes = [];
   if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
   cityRoot = null;
-  console.error('Manhattan GLB could not be prepared:', error);
+  console.error('Camellia city or collision FBX could not be prepared:', error);
   finishLoadingScreen();
-}
-
-function createManhattanGroundSurfaces(map, mapBounds) {
-  // The Manhattan GLB is a visual city export rather than the old FBX package
-  // with separately named road materials. Build a lightweight road/ground
-  // raycast layer from upward-facing triangles close to the bottom of the map.
-  map.updateMatrixWorld(true);
-  const minY = mapBounds.min.y;
-  const height = Math.max(1, mapBounds.max.y - mapBounds.min.y);
-  const groundBand = THREE.MathUtils.clamp(height * 0.12, 2, 32);
-  const chunks = new Map();
-  // Keep the generated raycast layer bounded on large city exports.
-  const MAX_GROUND_TRIANGLES = 120000;
-  let generatedTriangles = 0;
-  const a = new THREE.Vector3();
-  const b = new THREE.Vector3();
-  const c = new THREE.Vector3();
-  const ab = new THREE.Vector3();
-  const ac = new THREE.Vector3();
-  const normal = new THREE.Vector3();
-  const center = new THREE.Vector3();
-
-  map.traverse((object) => {
-    if (generatedTriangles >= MAX_GROUND_TRIANGLES) return;
-    if (!object.isMesh || !object.geometry?.attributes?.position) return;
-    const geometry = object.geometry;
-    const position = geometry.attributes.position;
-    const index = geometry.index;
-    const groups = geometry.groups.length
-      ? geometry.groups
-      : [{ start: 0, count: index ? index.count : position.count }];
-    // Keep every upward-facing triangle in the ground band. Thinning these
-    // triangles creates invisible holes that let cars fall through the city.
-    for (const group of groups) {
-      if (generatedTriangles >= MAX_GROUND_TRIANGLES) break;
-      const end = Math.min(group.start + group.count, index ? index.count : position.count);
-      for (let i = group.start; i + 2 < end && generatedTriangles < MAX_GROUND_TRIANGLES; i += 3) {
-        const ia = index ? index.getX(i) : i;
-        const ib = index ? index.getX(i + 1) : i + 1;
-        const ic = index ? index.getX(i + 2) : i + 2;
-        a.fromBufferAttribute(position, ia).applyMatrix4(object.matrixWorld);
-        b.fromBufferAttribute(position, ib).applyMatrix4(object.matrixWorld);
-        c.fromBufferAttribute(position, ic).applyMatrix4(object.matrixWorld);
-        ab.subVectors(b, a);
-        ac.subVectors(c, a);
-        normal.crossVectors(ab, ac).normalize();
-        if (normal.y < 0.88) continue;
-        center.copy(a).add(b).add(c).multiplyScalar(1 / 3);
-        if (center.y > minY + groundBand) continue;
-        const key = Math.floor(center.x / CITY_COLLISION_CELL) + ',' +
-          Math.floor(center.z / CITY_COLLISION_CELL);
-        let chunk = chunks.get(key);
-        if (!chunk) chunks.set(key, chunk = []);
-        chunk.push(
-          a.x,a.y,a.z,
-          b.x,b.y,b.z,
-          c.x,c.y,c.z
-        );
-        generatedTriangles++;
-      }
-    }
-  });
-
-  let triangleCount = 0;
-  for (const [cell, vertices] of chunks) {
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
-    geometry.addGroup(0, vertices.length / 3, 0);
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
-    const surface = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({
-      color: 0xffffff,
-      side: THREE.DoubleSide,
-      transparent: true,
-      opacity: 0,
-      depthWrite: false
-    }));
-    surface.name = 'Manhattan_Road_Ground_' + cell;
-    surface.userData.cityRoadSurface = true;
-    // Use the first sampled triangle's centroid so the spawn candidate is
-    // guaranteed to lie on this generated ground mesh.
-    surface.userData.cityRoadCandidate = {
-      x: (vertices[0] + vertices[3] + vertices[6]) / 3,
-      y: (vertices[1] + vertices[4] + vertices[7]) / 3,
-      z: (vertices[2] + vertices[5] + vertices[8]) / 3
-    };
-    surface.matrixAutoUpdate = false;
-    surface.matrix.identity();
-    surface.matrixWorld.identity();
-    cityRoot.add(surface);
-    triangleCount += vertices.length / 9;
-  }
-  console.info('Generated Manhattan ground/road sampling surfaces:', {
-    chunks: chunks.size, triangles: triangleCount, groundBand
-  });
-  return triangleCount;
 }
 
 function createOpenCityWorld() {
   if (cityWorldReady || cityWorldLoading) return;
   cityWorldLoading = true;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
-  $('loading-message').textContent = 'Loading Manhattan city map…';
+  $('loading-message').textContent = 'Loading Camellia city streets…';
   cityRoot = new THREE.Group();
-  cityRoot.name = 'manhattan_city_map';
+  cityRoot.name = 'camellia_city_map';
   scene.add(cityRoot);
 
-  const mapUrl = 'https://media.githubusercontent.com/media/IM2SKIBIDI4U/Traffic-Racer-2.o/main/manhatten.glb';
-  gltfLoader.load(mapUrl, (gltf) => {
+  const mapUrl = './assets/camellia-city/Camellia City.fbx';
+  const collisionUrl = './assets/camellia-city/Camellia_City_collision.fbx';
+  const fbxLoader = new FBXLoader();
+  fbxLoader.load(mapUrl, (map) => {
     try {
-      const map = gltf.scene;
-      map.name = 'Manhattan_City';
+      map.name = 'Camellia_City';
       map.updateMatrixWorld(true);
-      const bounds = new THREE.Box3().setFromObject(map);
-      const size = bounds.getSize(new THREE.Vector3());
-      const center = bounds.getCenter(new THREE.Vector3());
-      const horizontalSize = Math.max(size.x, size.z);
+      const sourceBounds = new THREE.Box3().setFromObject(map);
+      const size = sourceBounds.getSize(new THREE.Vector3());
+      const center = sourceBounds.getCenter(new THREE.Vector3());
+      const horizontalSize = Math.max(size.x,size.z);
       if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01 || !Number.isFinite(size.y)) {
-        throw new Error('Manhattan GLB has invalid dimensions or orientation.');
+        throw new Error('Camellia City FBX has invalid dimensions or orientation.');
       }
 
-      // GLB/glTF uses Y-up. Fit the city's horizontal footprint into the
-      // existing driving world while preserving its proportions.
       const mapScale = 1400 / horizontalSize;
+      const mapPosition = new THREE.Vector3(
+        -center.x * mapScale,
+        -sourceBounds.min.y * mapScale,
+        -center.z * mapScale
+      );
       map.scale.setScalar(mapScale);
-      map.position.set(-center.x * mapScale, -bounds.min.y * mapScale, -center.z * mapScale);
-      map.updateMatrixWorld(true);
-
-      // Preserve the GLB's original materials and texture maps. Replacing them
-      // with untextured basic materials made the entire city appear white.
+      map.position.copy(mapPosition);
       map.traverse((object) => {
         if (!object.isMesh) return;
         object.castShadow = false;
         object.receiveShadow = false;
         object.frustumCulled = true;
       });
-      const cityChunkCount = splitManhattanRenderMeshes(map);
-
       cityRoot.add(map);
-      cityRoot.updateMatrixWorld(true);
-      const scaledBounds = new THREE.Box3().setFromObject(map);
-      const groundTriangles = createManhattanGroundSurfaces(map, scaledBounds);
-      if (!groundTriangles) {
-        throw new Error('No upward-facing ground triangles were found near the bottom of the Manhattan GLB.');
+      map.updateMatrixWorld(true);
+
+      const surfaceStats = createCamelliaRoadWaterSurfaces(map);
+      if (surfaceStats.roadTriangles < 100 || surfaceStats.waterTriangles < 1) {
+        throw new Error('Camellia City is missing its named road or water material surfaces.');
       }
 
-      // Reuse the view-cullable city tiles as local wall colliders and index
-      // sampled ground triangles for both driving and respawn placement.
-      buildCityCollisionGrid(cityRoot);
-      let spawn = findCityRoadsideSpawn(cityRoot);
-      if (!spawn || !cityRoadCandidates.length) {
-        throw new Error('Could not find a clear, supported spawn on a continuous Manhattan road.');
-      }
+      fbxLoader.load(collisionUrl, (collisionRoot) => {
+        try {
+          const collisionStats = createCamelliaCollisionSources(collisionRoot,mapScale,mapPosition);
+          cityRoot.updateMatrixWorld(true);
+          buildCityCollisionGrid(cityRoot);
+          const spawn = findCityRoadsideSpawn(cityRoot);
+          if (!spawn || !cityRoadCandidates.length) {
+            throw new Error('Could not find a clear, supported spawn on a continuous Camellia road.');
+          }
+          const spawnGroundY = cityGroundHeightAt(spawn.x,spawn.z);
+          const spawnWaterY = cityWaterHeightAt(spawn.x,spawn.z);
+          if (spawnGroundY === null || spawnWaterY !== null || Math.abs(spawnGroundY + 0.12 - spawn.y) > 0.5) {
+            throw new Error('The selected Camellia spawn is not safely on dry road geometry.');
+          }
 
-      citySpawnPosition.copy(spawn);
-      cityWorldReady = true;
-      cityWorldLoading = false;
-      cityMapLoadFinished = true;
-      cityMapLoadFailed = false;
-      if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
-      if (running && player) {
-        player.position.copy(citySpawnPosition);
-        player.rotation.set(0, citySpawnHeading, 0);
-        cityHeading = citySpawnHeading;
-        citySpeedMps = 0;
-      }
-      console.info('Loaded Manhattan GLB and prepared driving surfaces/colliders.', {
-        size: size.toArray(),
-        scale: mapScale,
-        hitboxes: cityCollisionCount,
-        renderChunks: cityChunkCount,
-        roadMeshes: cityRoadCandidates.length,
-        groundCells: cityGroundGrid.size,
-        spawn: citySpawnPosition.toArray(),
-        heading: citySpawnHeading
-      });
-      finishLoadingScreen();
+          citySpawnPosition.copy(spawn);
+          cityWorldReady = true;
+          cityWorldLoading = false;
+          cityMapLoadFinished = true;
+          cityMapLoadFailed = false;
+          if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
+          if (running && player) {
+            player.position.copy(citySpawnPosition);
+            player.rotation.set(0,citySpawnHeading,0);
+            cityHeading = citySpawnHeading;
+            citySpeedMps = 0;
+          }
+          console.info('Loaded Camellia City with named roads, water and dedicated building hulls.',{
+            sourceSize:size.toArray(),
+            scale:mapScale,
+            hitboxes:collisionStats.hullCount,
+            wallTriangles:collisionStats.wallTriangles,
+            roadChunks:surfaceStats.roadChunks,
+            roadCandidates:cityRoadCandidates.length,
+            waterChunks:surfaceStats.waterChunks,
+            spawn:citySpawnPosition.toArray(),
+            spawnHeading:citySpawnHeading
+          });
+          finishLoadingScreen();
+        } catch (error) {
+          failCityMapLoad(error);
+        }
+      }, (event) => {
+        if (event.total) $('loading-message').textContent = 'Loading Camellia building hitboxes… ' + Math.round(event.loaded/event.total*100) + '%';
+      }, failCityMapLoad);
     } catch (error) {
       failCityMapLoad(error);
     }
   }, (event) => {
-    if (event.total) {
-      console.info('Loading Manhattan GLB:', Math.round(event.loaded / event.total * 100) + '%');
-    }
+    if (event.total) $('loading-message').textContent = 'Loading Camellia city streets… ' + Math.round(event.loaded/event.total*100) + '%';
   }, failCityMapLoad);
 }
 function createCityTrafficModel(fallbackColor,style=0) {
