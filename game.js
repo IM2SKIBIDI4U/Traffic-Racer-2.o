@@ -11,9 +11,9 @@ const nightColor = new THREE.Color(0x071321);
 scene.background = dayColor;
 scene.fog = new THREE.Fog(dayColor, 55, 250);
 // Set camera far clipping plane to 400 (instead of 180 or 200)
-const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 400);
+const camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 260);
 // Match fog so distant cars fade in smoothly instead of popping
-scene.fog = new THREE.Fog(0x0b1624, 140, 340);
+scene.fog = new THREE.Fog(0x0b1624, 95, 220);
 camera.position.set(0, 5.5, 15);
 camera.lookAt(0, 1, -22);
 
@@ -24,7 +24,7 @@ try {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.65));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.5));
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -2687,7 +2687,7 @@ function splitCamelliaRoadAndWaterSurfaces(root) {
   });
   for (const {parent,surface} of surfacesToAttach) parent.add(surface);
 }
-function buildCityCollisionGrid(root, buildingColliderRoot = root) {
+function buildCityCollisionGrid(root, buildingColliderRoot = root, lightweight = false) {
   cityCollisionGrid.clear();
   cityCollisionCount = 0;
   cityCollisionMeshes = [];
@@ -2704,6 +2704,28 @@ function buildCityCollisionGrid(root, buildingColliderRoot = root) {
   const worldBounds = new THREE.Box3().setFromObject(root);
   cityGroundFloorY = worldBounds.min.y;
   cityGroundCeilingY = worldBounds.max.y;
+  if (lightweight) {
+    // Avoid full-map triangle preprocessing on lower-memory devices.
+    // The sampled ground meshes are reused as lightweight road candidates.
+    root.traverse((object) => {
+      if (!object.isMesh || !object.userData.cityRoadSurface) return;
+      object.geometry.computeBoundingBox();
+      const box = object.geometry.boundingBox;
+      if (!box) return;
+      const worldBox = box.clone().applyMatrix4(object.matrixWorld);
+      const x = (worldBox.min.x + worldBox.max.x) * 0.5;
+      const z = (worldBox.min.z + worldBox.max.z) * 0.5;
+      const cellX = Math.floor(x / CITY_GROUND_CELL);
+      const cellZ = Math.floor(z / CITY_GROUND_CELL);
+      const roadKey = cellX + ',' + cellZ;
+      const roadBucket = cityRoadMeshGrid.get(roadKey) || [];
+      roadBucket.push(object);
+      cityRoadMeshGrid.set(roadKey, roadBucket);
+      cityRoadCandidates.push({ x, z, fallbackY: worldBox.min.y, mesh: object });
+    });
+    console.warn('Using lightweight Manhattan collision mode; detailed building hitboxes are disabled.');
+    return;
+  }
   const bounds = new THREE.Box3();
   const size = new THREE.Vector3();
   const cityCollisionMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
@@ -3490,7 +3512,7 @@ function createOpenCityWorld() {
 
       // Use the map's exported hull meshes for building collision instead of
       // rebuilding triangle colliders from every visible building surface.
-      buildCityCollisionGrid(cityRoot, map);
+      buildCityCollisionGrid(cityRoot, map, true);
       let spawn = findCityRoadsideSpawn(cityRoot);
       if (!spawn && cityRoadCandidates.length) {
         // Last-resort spawn: choose a clear sampled ground triangle and a
