@@ -4,6 +4,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
+const VEHICLE_SIZE_SCALE = 0.8;
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
 const dayColor = new THREE.Color(0x9bbdd0);
@@ -365,8 +366,9 @@ function createCar(color, isPlayer = false, style = 0) {
   group.userData.body = lower;
   group.userData.bodyBaseY = lower.position.y;
   group.userData.modelStyle = style;
-  group.userData.collisionHalfWidth = width * 0.52;
-  group.userData.collisionHalfLength = length * 0.47;
+  group.scale.setScalar(VEHICLE_SIZE_SCALE);
+  group.userData.collisionHalfWidth = width * 0.52 * VEHICLE_SIZE_SCALE;
+  group.userData.collisionHalfLength = length * 0.47 * VEHICLE_SIZE_SCALE;
   group.userData.massKg = style === 3 ? 2250 : style === 2 ? 1850 : style === 1 ? 1450 : 1650;
   return group;
 }
@@ -565,7 +567,7 @@ function prepareTrafficModel(source) {
   const size = bounds.getSize(new THREE.Vector3());
   const length = Math.max(size.x, size.z);
   if (!Number.isFinite(length) || length <= 0) throw new Error('Traffic vehicle model has no measurable dimensions');
-  model.scale.multiplyScalar(4.5 / length);
+  model.scale.multiplyScalar(4.5 * VEHICLE_SIZE_SCALE / length);
   model.updateWorldMatrix(true, true);
   const scaledBounds = new THREE.Box3().setFromObject(model);
   const center = scaledBounds.getCenter(new THREE.Vector3());
@@ -577,7 +579,7 @@ function prepareTrafficModel(source) {
       object.receiveShadow = true;
     }
   });
-  model.userData.collisionHalfWidth = Math.max(0.8, scaledSize.x * 0.46);
+  model.userData.collisionHalfWidth = Math.max(0.8 * VEHICLE_SIZE_SCALE, scaledSize.x * 0.46);
   model.userData.collisionHalfLength = scaledSize.z * 0.47;
   return model;
 }
@@ -705,7 +707,7 @@ function loadTrafficModels() {
           if (rawBox.isEmpty() || rawSize.lengthSq() === 0) return;
 
           const maxHorizontal = Math.max(rawSize.x, rawSize.z);
-          const scale = 4.5 / maxHorizontal;
+          const scale = 4.5 * VEHICLE_SIZE_SCALE / maxHorizontal;
           raw.scale.multiplyScalar(scale);
           raw.updateMatrixWorld(true);
 
@@ -738,8 +740,8 @@ function loadTrafficModels() {
           wrapper.name = object.name || `vehicle_${index}`;
           wrapper.add(pivot);
           wrapper.userData.wheels = getTrafficWheels(wrapper);
-          wrapper.userData.collisionHalfWidth = Math.min(1.05, Math.max(0.75, finalSize.x * 0.42));
-          wrapper.userData.collisionHalfLength = Math.min(2.4, Math.max(1.6, finalSize.z * 0.44));
+          wrapper.userData.collisionHalfWidth = Math.min(1.05 * VEHICLE_SIZE_SCALE, Math.max(0.75 * VEHICLE_SIZE_SCALE, finalSize.x * 0.42));
+          wrapper.userData.collisionHalfLength = Math.min(2.4 * VEHICLE_SIZE_SCALE, Math.max(1.6 * VEHICLE_SIZE_SCALE, finalSize.z * 0.44));
 
           trafficVehicles.push(wrapper);
         });
@@ -1915,8 +1917,8 @@ function resolveVehicleImpulse(a, b, normalX, normalZ, massA, massB, restitution
 }
 
 function separatePoliceHitbox(policeUnit, otherZ, otherLane, otherWidth, otherLength, keepPolicePlanted = false) {
-  const policeWidth = policeUnit.mesh.userData.collisionHalfWidth || 1.08;
-  const policeLength = policeUnit.mesh.userData.collisionHalfLength || 2.4;
+  const policeWidth = policeUnit.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE);
+  const policeLength = policeUnit.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE);
   const dx = policeUnit.lateral - otherLane;
   const dz = policeUnit.pathZ - otherZ;
   const overlapX = policeWidth + otherWidth - Math.abs(dx);
@@ -2138,8 +2140,8 @@ function updatePoliceChase(dt) {
       const contactDz = unit.pathZ - 7;
       const playerHit = separatePoliceHitbox(
         unit, 7, playerLateral,
-        player.userData.collisionHalfWidth || 1.05,
-        player.userData.collisionHalfLength || 2.1,
+        player.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE),
+        player.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE),
         true
       );
       if (playerHit) {
@@ -2166,14 +2168,14 @@ function updatePoliceChase(dt) {
         const normalZ = contactDz || 0;
         const playerBody = {
           vx: steerVelocity + collisionRecoil, vz: actualSpeed / 3.6,
-          omega: collisionAngularVelocity, halfWidth: player.userData.collisionHalfWidth || 1.05,
-          halfLength: player.userData.collisionHalfLength || 2.1
+          omega: collisionAngularVelocity, halfWidth: player.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE),
+          halfLength: player.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)
         };
         const policeBody = {
           vx: 0,
           vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: 0,
-          halfWidth: unit.mesh.userData.collisionHalfWidth || 1.08,
-          halfLength: unit.mesh.userData.collisionHalfLength || 2.4
+          halfWidth: unit.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE),
+          halfLength: unit.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE)
         };
         const contact = resolveVehicleImpulse(
           playerBody, policeBody, normalX, normalZ,
@@ -2198,12 +2200,12 @@ function updatePoliceChase(dt) {
         const dz = trafficCar.pathZ - unit.pathZ;
         const trafficHit = separatePoliceHitbox(
           unit, trafficCar.pathZ, trafficCar.lateralX,
-          trafficCar.mesh.userData.collisionHalfWidth || 1.05,
-          trafficCar.mesh.userData.collisionHalfLength || 2.1
+          trafficCar.mesh.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE),
+          trafficCar.mesh.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)
         );
         if (trafficHit) {
-          const policeBody = { vx: (unit.lateralVelocity || 0) + (unit.impactVelX || 0), vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: unit.angularVelocity || 0, halfWidth: unit.mesh.userData.collisionHalfWidth || 1.08, halfLength: unit.mesh.userData.collisionHalfLength || 2.4 };
-          const trafficBody = { vx: (trafficCar.laneVelocity || 0) + (trafficCar.physicsVelX || 0), vz: trafficCar.botSpeed / 3.6 + (trafficCar.physicsVelZ || 0), omega: trafficCar.angularVelocity || 0, halfWidth: trafficCar.mesh.userData.collisionHalfWidth || 1.05, halfLength: trafficCar.mesh.userData.collisionHalfLength || 2.1 };
+          const policeBody = { vx: (unit.lateralVelocity || 0) + (unit.impactVelX || 0), vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: unit.angularVelocity || 0, halfWidth: unit.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE), halfLength: unit.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE) };
+          const trafficBody = { vx: (trafficCar.laneVelocity || 0) + (trafficCar.physicsVelX || 0), vz: trafficCar.botSpeed / 3.6 + (trafficCar.physicsVelZ || 0), omega: trafficCar.angularVelocity || 0, halfWidth: trafficCar.mesh.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE), halfLength: trafficCar.mesh.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE) };
           resolveVehicleImpulse(policeBody, trafficBody, dx || (unit.offset >= 0 ? 1 : -1), dz,
             unit.massKg || 1950, trafficCar.mesh.userData.massKg || 1650, 0.1);
           unit.impactVelX = policeBody.vx - (unit.lateralVelocity || 0);
@@ -2220,12 +2222,12 @@ function updatePoliceChase(dt) {
         const dz = otherPolice.pathZ - unit.pathZ;
         const policeHit = separatePoliceHitbox(
           unit, otherPolice.pathZ, otherPolice.lateral,
-          otherPolice.mesh.userData.collisionHalfWidth || 1.08,
-          otherPolice.mesh.userData.collisionHalfLength || 2.4
+          otherPolice.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE),
+          otherPolice.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE)
         );
         if (policeHit) {
-          const firstBody = { vx: (unit.lateralVelocity || 0) + (unit.impactVelX || 0), vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: unit.angularVelocity || 0, halfWidth: unit.mesh.userData.collisionHalfWidth || 1.08, halfLength: unit.mesh.userData.collisionHalfLength || 2.4 };
-          const secondBody = { vx: (otherPolice.lateralVelocity || 0) + (otherPolice.impactVelX || 0), vz: otherPolice.speed / 3.6 + (otherPolice.impactVelZ || 0), omega: otherPolice.angularVelocity || 0, halfWidth: otherPolice.mesh.userData.collisionHalfWidth || 1.08, halfLength: otherPolice.mesh.userData.collisionHalfLength || 2.4 };
+          const firstBody = { vx: (unit.lateralVelocity || 0) + (unit.impactVelX || 0), vz: unit.speed / 3.6 + (unit.impactVelZ || 0), omega: unit.angularVelocity || 0, halfWidth: unit.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE), halfLength: unit.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE) };
+          const secondBody = { vx: (otherPolice.lateralVelocity || 0) + (otherPolice.impactVelX || 0), vz: otherPolice.speed / 3.6 + (otherPolice.impactVelZ || 0), omega: otherPolice.angularVelocity || 0, halfWidth: otherPolice.mesh.userData.collisionHalfWidth || (1.08 * VEHICLE_SIZE_SCALE), halfLength: otherPolice.mesh.userData.collisionHalfLength || (2.4 * VEHICLE_SIZE_SCALE) };
           resolveVehicleImpulse(firstBody, secondBody, dx || 1, dz, unit.massKg || 1950, otherPolice.massKg || 1950, 0.08);
           unit.impactVelX = firstBody.vx - (unit.lateralVelocity || 0);
           unit.impactVelZ = firstBody.vz - unit.speed / 3.6;
@@ -2472,7 +2474,7 @@ function updateTraffic(dt, previousPlayer) {
     for (let index = 1; index < group.length; index++) {
       const leader = group[index - 1];
       const follower = group[index];
-      const safeGap = (leader.mesh.userData.collisionHalfLength || 2.2) + (follower.mesh.userData.collisionHalfLength || 2.2) + 2.5;
+      const safeGap = (leader.mesh.userData.collisionHalfLength || (2.2 * VEHICLE_SIZE_SCALE)) + (follower.mesh.userData.collisionHalfLength || (2.2 * VEHICLE_SIZE_SCALE)) + 2.5 * VEHICLE_SIZE_SCALE;
       const gap = follower.pathZ - leader.pathZ;
       if (gap < safeGap) {
         const followerBody = { vx: (follower.laneVelocity || 0) + (follower.physicsVelX || 0), vz: follower.botSpeed / 3.6 + (follower.physicsVelZ || 0) };
@@ -2497,10 +2499,10 @@ function updateTraffic(dt, previousPlayer) {
     const oldState = oldPositions.get(item);
     const prevRelZ = oldState.z - previousPlayer.z;
     const nextRelZ = newZ - 7;
-    const playerHalfLength = (player.userData.collisionHalfLength || 2.1) * 0.88;
-    const botHalfLength = (item.mesh.userData.collisionHalfLength || 2.1) * 0.88;
-    const playerHalfWidth = (player.userData.collisionHalfWidth || 1.05) * 0.9;
-    const botHalfWidth = (item.mesh.userData.collisionHalfWidth || 1.05) * 0.9;
+    const playerHalfLength = (player.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)) * 0.88;
+    const botHalfLength = (item.mesh.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)) * 0.88;
+    const playerHalfWidth = (player.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE)) * 0.9;
+    const botHalfWidth = (item.mesh.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE)) * 0.9;
     const combinedLength = playerHalfLength + botHalfLength;
     const combinedWidth = playerHalfWidth + botHalfWidth;
     const dxStart = previousPlayer.x - oldState.lateral;
@@ -3231,8 +3233,8 @@ function createOpenCityWorld() {
   const source=fleet[Math.floor(Math.random()*fleet.length)];
   const vehicle=source.clone(true);
   vehicle.userData.wheels=getTrafficWheels(vehicle);
-  vehicle.userData.collisionHalfWidth=source.userData.collisionHalfWidth||1.05;
-  vehicle.userData.collisionHalfLength=source.userData.collisionHalfLength||2.1;
+  vehicle.userData.collisionHalfWidth=source.userData.collisionHalfWidth||1.05*VEHICLE_SIZE_SCALE;
+  vehicle.userData.collisionHalfLength=source.userData.collisionHalfLength||2.1*VEHICLE_SIZE_SCALE;
   vehicle.userData.isImportedCityModel=true;
   return vehicle;
 }
@@ -3294,7 +3296,7 @@ function spawnCityRepairPickup() {
 function cityVehicleCollision(mesh, other, speed) {
   const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
   const distance=Math.hypot(dx,dz);
-  const hitRadius=other.userData.isPolice?2.5:3.5;
+  const hitRadius=(other.userData.isPolice?2.5:3.5)*VEHICLE_SIZE_SCALE;
   if(distance>hitRadius || distance<0.001)return false;
   const nx=dx/distance,nz=dz/distance;
   mesh.position.x+=nx*(hitRadius-distance)*0.55;
