@@ -4,7 +4,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
-const VEHICLE_SIZE_SCALE = 0.8;
+const VEHICLE_SIZE_SCALE = 0.56;
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
 const dayColor = new THREE.Color(0x9bbdd0);
@@ -373,6 +373,29 @@ function createCar(color, isPlayer = false, style = 0) {
   return group;
 }
 
+function getPlayerVehicleLength() {
+  const style = player?.userData?.modelStyle ?? cars.find((car) => car.id === selectedCar)?.modelStyle ?? 0;
+  const lengthByStyle = [4.25, 4.5, 4.8, 5.1];
+  return (lengthByStyle[style] || lengthByStyle[0]) * VEHICLE_SIZE_SCALE;
+}
+
+function matchBotVehicleToPlayerSize(vehicle) {
+  if (!vehicle) return vehicle;
+  vehicle.updateWorldMatrix(true, true);
+  const bounds = new THREE.Box3().setFromObject(vehicle);
+  if (bounds.isEmpty()) return vehicle;
+  const size = bounds.getSize(new THREE.Vector3());
+  const length = Math.max(size.x, size.z);
+  const targetLength = getPlayerVehicleLength();
+  if (!Number.isFinite(length) || length <= 0.1 || !Number.isFinite(targetLength)) return vehicle;
+  const ratio = targetLength / length;
+  vehicle.scale.multiplyScalar(ratio);
+  if (Number.isFinite(vehicle.userData.collisionHalfWidth)) vehicle.userData.collisionHalfWidth *= ratio;
+  if (Number.isFinite(vehicle.userData.collisionHalfLength)) vehicle.userData.collisionHalfLength *= ratio;
+  vehicle.updateWorldMatrix(true, true);
+  return vehicle;
+}
+
 
 function createTrafficVariants() {
   const specs = [
@@ -406,6 +429,7 @@ function createTrafficVariants() {
       bumper.position.set(0, 0.48, -2.05);
       car.add(bumper);
     }
+    matchBotVehicleToPlayerSize(car);
     trafficVehicles.push(car);
   }
 }
@@ -567,7 +591,7 @@ function prepareTrafficModel(source) {
   const size = bounds.getSize(new THREE.Vector3());
   const length = Math.max(size.x, size.z);
   if (!Number.isFinite(length) || length <= 0) throw new Error('Traffic vehicle model has no measurable dimensions');
-  model.scale.multiplyScalar(4.5 * VEHICLE_SIZE_SCALE / length);
+  model.scale.multiplyScalar(getPlayerVehicleLength() / length);
   model.updateWorldMatrix(true, true);
   const scaledBounds = new THREE.Box3().setFromObject(model);
   const center = scaledBounds.getCenter(new THREE.Vector3());
@@ -707,7 +731,7 @@ function loadTrafficModels() {
           if (rawBox.isEmpty() || rawSize.lengthSq() === 0) return;
 
           const maxHorizontal = Math.max(rawSize.x, rawSize.z);
-          const scale = 4.5 * VEHICLE_SIZE_SCALE / maxHorizontal;
+          const scale = getPlayerVehicleLength() / maxHorizontal;
           raw.scale.multiplyScalar(scale);
           raw.updateMatrixWorld(true);
 
@@ -742,6 +766,7 @@ function loadTrafficModels() {
           wrapper.userData.wheels = getTrafficWheels(wrapper);
           wrapper.userData.collisionHalfWidth = Math.min(1.05 * VEHICLE_SIZE_SCALE, Math.max(0.75 * VEHICLE_SIZE_SCALE, finalSize.x * 0.42));
           wrapper.userData.collisionHalfLength = Math.min(2.4 * VEHICLE_SIZE_SCALE, Math.max(1.6 * VEHICLE_SIZE_SCALE, finalSize.z * 0.44));
+          matchBotVehicleToPlayerSize(wrapper);
 
           trafficVehicles.push(wrapper);
         });
@@ -1276,6 +1301,7 @@ function spawnTraffic() {
     car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
     // Traffic heading is applied once below through trafficDirectionOffset.
   }
+  matchBotVehicleToPlayerSize(car);
   if (isTarget) {
     car.name = 'police_mode_target';
     const beacon = new THREE.Group();
@@ -1863,6 +1889,7 @@ function spawnPoliceChaser(offset = 0) {
   const car = createCar(0x172b46, false, 2);
   car.name = 'police_pursuit_unit';
   addPoliceLightbar(car);
+  matchBotVehicleToPlayerSize(car);
   scene.add(car);
   const index = policeChasers.length;
   const roles = ['front', 'rear', 'left', 'right'];
@@ -3229,14 +3256,14 @@ function createOpenCityWorld() {
   }, failCityMapLoad);
 }function createCityTrafficModel(fallbackColor,style=0) {
   const fleet=activeTrafficVehicles?.length?activeTrafficVehicles:trafficVehicles;
-  if(!fleet.length)return createCar(fallbackColor,false,style);
+  if(!fleet.length)return matchBotVehicleToPlayerSize(createCar(fallbackColor,false,style));
   const source=fleet[Math.floor(Math.random()*fleet.length)];
   const vehicle=source.clone(true);
   vehicle.userData.wheels=getTrafficWheels(vehicle);
   vehicle.userData.collisionHalfWidth=source.userData.collisionHalfWidth||1.05*VEHICLE_SIZE_SCALE;
   vehicle.userData.collisionHalfLength=source.userData.collisionHalfLength||2.1*VEHICLE_SIZE_SCALE;
   vehicle.userData.isImportedCityModel=true;
-  return vehicle;
+  return matchBotVehicleToPlayerSize(vehicle);
 }
 function spawnCityTraffic() {
   if(cityTraffic.length>=CITY_TRAFFIC_LIMIT)return;
@@ -3457,7 +3484,7 @@ function startDragRace() {
   dragRaceActive = true;
   dragRaceTime = 0;
   dragRaceOpponentSpeed = 0;
-  if (!dragRaceOpponent) dragRaceOpponent = createCar(0xe3a52f, false, 1);
+  if (!dragRaceOpponent) dragRaceOpponent = matchBotVehicleToPlayerSize(createCar(0xe3a52f, false, 1));
   dragRaceOpponent.position.set(4.25, 0, -525);
   dragRaceOpponent.rotation.set(0, 0, 0);
   dragRaceOpponent.visible = true;
