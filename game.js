@@ -2734,7 +2734,7 @@ function createDriveForSpeedCollisionSources(root) {
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
     const geometry = object.geometry, positionAttribute = geometry.attributes.position, index = geometry.index;
     const materials=Array.isArray(object.material)?object.material:[object.material];
-    const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count}];
+    const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count,materialIndex:0}];
     for (const group of groups) {
       const materialName=(materials[group.materialIndex]?.name||'').trim();
       if(!/^building$/i.test(materialName)&&!/^blocks$/i.test(materialName))continue;
