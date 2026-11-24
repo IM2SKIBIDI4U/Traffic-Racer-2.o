@@ -4,7 +4,8 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
-const VEHICLE_SIZE_SCALE = 0.56;
+const VEHICLE_SIZE_SCALE = 0.448;
+const VEHICLE_SPEED_SCALE = 0.8;
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
 const dayColor = new THREE.Color(0x9bbdd0);
@@ -123,6 +124,7 @@ let cityRepairTimer = 3;
 let cityDistance = 0;
 let citySpeedMps = 0;
 let cityHeading = 0;
+let cityDriftSlip = 0;
 let cityFallSpeed = 0;
 let cityFootFallSpeed = 0;
 let cityWorldReady = false;
@@ -1275,7 +1277,7 @@ function spawnTraffic() {
   const { lane, z, oncoming } = spawn;
   const difficulty = Math.min(8, Math.floor(score / 500));
   const paceOffset = (Math.random() - 0.5) * 24;
-  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset * 0.35, 68, 92);
+  const botSpeed = THREE.MathUtils.clamp(getTrafficPaceKmh() + paceOffset * 0.35, 68, 92) * VEHICLE_SPEED_SCALE;
   const colors = [0xe8e5dc, 0xb84238, 0x334f66, 0x8b9b92, 0xc59b4e, 0x252a32];
   const isPolice = gameMode === 'escape' && score > 250 && Math.random() < 0.025;
   // In Police mode, keep exactly one marked suspect active at a time.
@@ -1534,6 +1536,7 @@ if (healthBar) {
 actualSpeed = 0;
 steerVelocity = 0;
 citySpeedMps = 0;
+cityDriftSlip = 0;
 cityFallSpeed = 0;
 cityFootFallSpeed = 0;
 cityHeading = 0;
@@ -1758,8 +1761,8 @@ function setLocation(index) {
 function effectiveCarStats(spec) {
   const traction = weatherMode === 'snow' ? 0.7 : weatherMode === 'rain' ? 0.86 : weatherMode === 'fog' ? 0.96 : 1;
   return {
-    maxSpeed: (spec.maxSpeed + upgradeLevels.engine*8) * (weatherMode === 'snow' ? 0.82 : weatherMode === 'rain' ? 0.92 : 1),
-    acceleration: (spec.acceleration + upgradeLevels.engine*1.8) * traction,
+    maxSpeed: (spec.maxSpeed + upgradeLevels.engine*8) * (weatherMode === 'snow' ? 0.82 : weatherMode === 'rain' ? 0.92 : 1) * VEHICLE_SPEED_SCALE,
+    acceleration: (spec.acceleration + upgradeLevels.engine*1.8) * traction * VEHICLE_SPEED_SCALE,
     handling: (spec.handling + upgradeLevels.handling*0.65) * traction,
     braking: (45 + upgradeLevels.brakes*8) * (weatherMode === 'snow' ? 0.7 : weatherMode === 'rain' ? 0.84 : 1)
   };
@@ -2074,6 +2077,30 @@ function emitPoliceDamageSmoke(unit, dt) {
   });
 }
 
+function emitDriftSmoke(vehicle, dt, speedMps, steer, drifting) {
+  if (!vehicle || !drifting || Math.abs(speedMps) < 5.5 || particles.length > 90) return;
+  vehicle.userData.driftSmokeTimer = Math.max(0, (vehicle.userData.driftSmokeTimer || 0) - dt);
+  if (vehicle.userData.driftSmokeTimer > 0) return;
+  vehicle.userData.driftSmokeTimer = 0.13;
+  for (const side of [-1, 1]) {
+    const puff = new THREE.Mesh(
+      new THREE.SphereGeometry(0.13, 6, 5),
+      new THREE.MeshBasicMaterial({ color: 0xc7cdd1, transparent: true, opacity: 0.26, depthWrite: false })
+    );
+    puff.position.copy(vehicle.localToWorld(new THREE.Vector3(side * 0.48, 0.11, -1.15)));
+    scene.add(puff);
+    particles.push({
+      mesh: puff,
+      velocity: new THREE.Vector3(steer * 0.25 + side * 0.3, 0.45 + Math.random() * 0.4, 0.2),
+      life: 0.58 + Math.random() * 0.12,
+      maxLife: 0.7,
+      smoke: true,
+      smokeOpacity: 0.26,
+      startScale: puff.scale.x
+    });
+  }
+}
+
 function updatePoliceChase(dt) {
   if (!running) return;
   if (gameMode === 'escape') {
@@ -2084,7 +2111,8 @@ function updatePoliceChase(dt) {
       const offset = (index % 2 === 0 ? -1 : 1) * (1.2 + (index % 3) * 0.65);
       spawnPoliceChaser(offset);
     }
-    const policeMaxSpeed = Math.min(245, Math.max(180, actualSpeed + 65));
+    const policeMaxSpeed = Math.min(245 * VEHICLE_SPEED_SCALE,
+      Math.max(180 * VEHICLE_SPEED_SCALE, actualSpeed + 65 * VEHICLE_SPEED_SCALE));
     for (const unit of policeChasers) {
       if (unit.disabled) continue;
       unit.ramCooldown = Math.max(0, (unit.ramCooldown || 0) - dt);
@@ -2130,9 +2158,11 @@ function updatePoliceChase(dt) {
           unit.maneuver = 'approach';
         }
       }
-      const approachSpeed = Math.min(policeMaxSpeed, Math.max(150, unit.observedPlayerSpeed + 65));
-      const brakeSpeed = Math.max(100, unit.observedPlayerSpeed - 30 - unit.observedBrake * 8);
-      const flankSpeed = THREE.MathUtils.clamp(unit.observedPlayerSpeed - 2, 0, policeMaxSpeed);
+      const approachSpeed = Math.min(policeMaxSpeed,
+        Math.max(150 * VEHICLE_SPEED_SCALE, unit.observedPlayerSpeed + 65 * VEHICLE_SPEED_SCALE));
+      const brakeSpeed = Math.max(100 * VEHICLE_SPEED_SCALE,
+        unit.observedPlayerSpeed - 30 * VEHICLE_SPEED_SCALE - unit.observedBrake * 8 * VEHICLE_SPEED_SCALE);
+      const flankSpeed = THREE.MathUtils.clamp(unit.observedPlayerSpeed - 2 * VEHICLE_SPEED_SCALE, 0, policeMaxSpeed);
       const targetSpeed = Math.min(policeMaxSpeed,
         unit.maneuver === 'flank' ? flankSpeed : unit.maneuver === 'brake' ? brakeSpeed : approachSpeed);
       unit.speed = THREE.MathUtils.damp(unit.speed, targetSpeed,
@@ -2209,7 +2239,7 @@ function updatePoliceChase(dt) {
           player.userData.massKg || 1750, 9000, 0.06
         );
         steerVelocity += contact.aX;
-        actualSpeed = THREE.MathUtils.clamp(actualSpeed + contact.aZ * 3.6, 0, 260);
+        actualSpeed = THREE.MathUtils.clamp(actualSpeed + contact.aZ * 3.6, 0, 260 * VEHICLE_SPEED_SCALE);
         unit.impactVelX = 0;
         unit.lateralVelocity = 0;
         unit.impactVelZ = policeBody.vz - unit.speed / 3.6;
@@ -2240,7 +2270,7 @@ function updatePoliceChase(dt) {
           unit.angularVelocity = policeBody.omega;
           trafficCar.angularVelocity = trafficBody.omega;
           trafficCar.physicsVelX = trafficBody.vx - (trafficCar.laneVelocity || 0);
-          trafficCar.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 92 / 3.6) - trafficCar.botSpeed / 3.6;
+          trafficCar.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 92 * VEHICLE_SPEED_SCALE / 3.6) - trafficCar.botSpeed / 3.6;
         }
       }
       for (const otherPolice of policeChasers) {
@@ -2443,14 +2473,14 @@ function updateTraffic(dt, previousPlayer) {
       }
 
 
-      const cruise = THREE.MathUtils.clamp(78 + (item.paceOffset || 0) * 0.2, 72, 90);
+      const cruise = THREE.MathUtils.clamp(78 + (item.paceOffset || 0) * 0.2, 72, 90) * VEHICLE_SPEED_SCALE;
       const followTarget = leader && gap < desiredGap
-        ? Math.max(42, leader.botSpeed - (desiredGap - gap) * 1.25)
+        ? Math.max(42 * VEHICLE_SPEED_SCALE, leader.botSpeed - (desiredGap - gap) * 1.25)
         : cruise;
       const targetSpeed = Math.min(cruise, followTarget);
       item.botSpeed = THREE.MathUtils.clamp(
         THREE.MathUtils.damp(item.botSpeed, targetSpeed, targetSpeed < item.botSpeed ? 2.4 : 1.15, dt),
-        0, 92
+        0, 92 * VEHICLE_SPEED_SCALE
       );
 
       const previousLateral = item.lateralX;
@@ -2467,14 +2497,15 @@ function updateTraffic(dt, previousPlayer) {
       // Oncoming cars keep a predictable speed and never use same-direction
       // lane-change logic.
       item.botSpeed = THREE.MathUtils.clamp(
-        THREE.MathUtils.damp(item.botSpeed, 82 + (item.paceOffset || 0) * 0.2, 1.0, dt), 72, 92
+        THREE.MathUtils.damp(item.botSpeed, (82 + (item.paceOffset || 0) * 0.2) * VEHICLE_SPEED_SCALE,
+          1.0, dt), 72 * VEHICLE_SPEED_SCALE, 92 * VEHICLE_SPEED_SCALE
       );
     }
 
     // Keep the base speed and collision carry velocity inside a hard traffic cap.
-    item.botSpeed = THREE.MathUtils.clamp(item.botSpeed, 0, 92);
+    item.botSpeed = THREE.MathUtils.clamp(item.botSpeed, 0, 92 * VEHICLE_SPEED_SCALE);
     item.physicsVelZ = THREE.MathUtils.clamp(item.physicsVelZ || 0,
-      -item.botSpeed / 3.6, (92 - item.botSpeed) / 3.6);
+      -item.botSpeed / 3.6, (92 * VEHICLE_SPEED_SCALE - item.botSpeed) / 3.6);
     const botMps = item.botSpeed / 3.6 * 2;
     item.pathZ += (item.oncoming ? playerMps + botMps : playerMps - botMps) * dt;
     // Collision impulses are persistent velocity, not one-frame position snaps.
@@ -2508,8 +2539,8 @@ function updateTraffic(dt, previousPlayer) {
         const leaderBody = { vx: (leader.laneVelocity || 0) + (leader.physicsVelX || 0), vz: leader.botSpeed / 3.6 + (leader.physicsVelZ || 0) };
         resolveVehicleImpulse(followerBody, leaderBody, 0, -1,
           follower.mesh.userData.massKg || 1650, leader.mesh.userData.massKg || 1650, 0.1);
-        follower.physicsVelZ = THREE.MathUtils.clamp(followerBody.vz, 0, 92 / 3.6) - follower.botSpeed / 3.6;
-        leader.physicsVelZ = THREE.MathUtils.clamp(leaderBody.vz, 0, 92 / 3.6) - leader.botSpeed / 3.6;
+        follower.physicsVelZ = THREE.MathUtils.clamp(followerBody.vz, 0, 92 * VEHICLE_SPEED_SCALE / 3.6) - follower.botSpeed / 3.6;
+        leader.physicsVelZ = THREE.MathUtils.clamp(leaderBody.vz, 0, 92 * VEHICLE_SPEED_SCALE / 3.6) - leader.botSpeed / 3.6;
         follower.pathZ = leader.pathZ + safeGap;
       }
     }
@@ -2612,12 +2643,12 @@ function updateTraffic(dt, previousPlayer) {
         item.pathZ = 7 + longitudinalSide * (combinedLength + 0.14);
       }
       item.physicsVelX = trafficBody.vx - item.laneVelocity;
-      item.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 92 / 3.6) - item.botSpeed / 3.6;
+      item.physicsVelZ = THREE.MathUtils.clamp(trafficBody.vz, 0, 92 * VEHICLE_SPEED_SCALE / 3.6) - item.botSpeed / 3.6;
       item.angularVelocity = trafficBody.omega;
       collisionAngularVelocity = playerBody.omega;
       item.targetLane = item.lane = item.lateralX;
       steerVelocity = playerBody.vx;
-      actualSpeed = THREE.MathUtils.clamp(playerBody.vz * 3.6, 0, 260);
+      actualSpeed = THREE.MathUtils.clamp(playerBody.vz * 3.6, 0, 260 * VEHICLE_SPEED_SCALE);
       collisionYaw += THREE.MathUtils.clamp(-contact.aX * 0.025, -0.18, 0.18);
       // Stronger lateral recoil makes a high-speed hit visibly throw the player car sideways.
       collisionRecoil = THREE.MathUtils.clamp(collisionRecoil + contact.aX * 1.15, -12, 12);
@@ -2941,6 +2972,7 @@ function showCityRecoveryScreen(titleText, detailText) {
   cityRespawnPending=true;
   paused=true;
   citySpeedMps=0;
+  cityDriftSlip=0;
   actualSpeed=0;
   for(const key of Object.keys(keys))keys[key]=false;
   if(!cityRespawnScreen) {
@@ -2981,6 +3013,7 @@ function respawnCityPlayer() {
   player.rotation.set(0,citySpawnHeading,0);
   cityHeading=citySpawnHeading;
   citySpeedMps=0;
+  cityDriftSlip=0;
   cityFallSpeed=0;
   cityFootFallSpeed=0;
   actualSpeed=0;
@@ -3283,7 +3316,7 @@ function spawnCityTraffic() {
   mesh.position.set(road.x,groundY+0.12,road.z);
   mesh.rotation.y=heading;
   scene.add(mesh);
-  cityTraffic.push({mesh,heading,roadMesh:road.mesh,speed:13+Math.random()*9,turnCooldown:4});
+  cityTraffic.push({mesh,heading,roadMesh:road.mesh,speed:(13+Math.random()*9)*VEHICLE_SPEED_SCALE,turnCooldown:4});
 }
 function spawnCityPolice() {
   if(cityPolice.filter(p=>!p.disabled).length>=6)return;
@@ -3302,7 +3335,7 @@ function spawnCityPolice() {
   scene.add(mesh);
   // Cruisers enter the pursuit already moving so the player is not waiting
   // for them to accelerate from a standstill.
-  cityPolice.push({mesh,heading:route.heading,roadMesh:road.mesh,speed:29,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
+  cityPolice.push({mesh,heading:route.heading,roadMesh:road.mesh,speed:29*VEHICLE_SPEED_SCALE,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
 }
 function spawnCityRepairPickup() {
   if(cityRepairPickups.length>=3)return;
@@ -3504,7 +3537,7 @@ function startDragRace() {
 function updateDragRace(dt) {
   if(!dragRaceActive) return;
   dragRaceTime+=dt;
-  dragRaceOpponentSpeed=THREE.MathUtils.damp(dragRaceOpponentSpeed,52,1.4,dt);
+  dragRaceOpponentSpeed=THREE.MathUtils.damp(dragRaceOpponentSpeed,52*VEHICLE_SPEED_SCALE,1.4,dt);
   dragRaceOpponent.position.z+=dragRaceOpponentSpeed*dt;
   if(player.position.z>=-220 && Math.abs(player.position.x)<10) {
     const won=player.position.z>=dragRaceOpponent.position.z;
@@ -3540,7 +3573,7 @@ function updateOpenCity(dt,stats) {
   }
   nitroActive=keys.nitro&&nitro>0&&!keys.brake;
   nitro=THREE.MathUtils.clamp(nitro+(nitroActive?-34:8)*dt,0,100);
-  const maxSpeed=(stats.maxSpeed+(nitroActive?45:0))/3.6;
+  const maxSpeed=(stats.maxSpeed+(nitroActive?45*VEHICLE_SPEED_SCALE:0))/3.6;
   const forward=keys.accelerate||autoAccel;
   if(keys.brake) {
     if(citySpeedMps>1.2)citySpeedMps=Math.max(0,citySpeedMps-(stats.braking/3.6+citySpeedMps*0.8)*dt);
@@ -3549,7 +3582,10 @@ function updateOpenCity(dt,stats) {
   else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
   const steer=(keys.left?1:0)-(keys.right?1:0);
   const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
-  cityHeading+=steer*1.35*speedFactor*Math.sign(citySpeedMps||1)*dt;
+  const drifting=keys.drift&&steer!==0&&Math.abs(citySpeedMps)>5.5;
+  cityHeading+=steer*1.35*(drifting?0.62:1)*speedFactor*Math.sign(citySpeedMps||1)*dt;
+  const targetDriftSlip=drifting?steer*Math.min(3.2,Math.abs(citySpeedMps)*0.2):0;
+  cityDriftSlip=THREE.MathUtils.damp(cityDriftSlip,targetDriftSlip,drifting?3.6:1.45,dt);
   cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
   let oldGroundY=cityGroundHeightAt(player.position.x,player.position.z);
   if(oldGroundY===null&&cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,null)) {
@@ -3561,8 +3597,9 @@ function updateOpenCity(dt,stats) {
     oldGroundY=cityGroundHeightAt(citySpawnPosition.x,citySpawnPosition.z);
     cityHeading=citySpawnHeading;
     citySpeedMps=0;
+    cityDriftSlip=0;
   }
-  player.rotation.y=cityHeading;
+  player.rotation.y=cityHeading-(drifting?steer*0.18:0);
   const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
   const oldPosition=player.position.clone();
   // Sample the imported city's ground triangles; the old artificial grid does
@@ -3572,7 +3609,7 @@ function updateOpenCity(dt,stats) {
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
-  const lateralSpeed=steer*citySpeedMps*0.12*surfaceFactor;
+  const lateralSpeed=(steer*citySpeedMps*0.12+cityDriftSlip)*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
   // Check the swept path at short intervals. Unsupported gaps block movement
   // instead of applying gravity, while water still triggers the recovery screen.
@@ -3586,6 +3623,7 @@ function updateOpenCity(dt,stats) {
     player.position.z=oldPosition.z;
     playerGroundY=oldGroundY;
     citySpeedMps=0;
+    cityDriftSlip=0;
     cityFallSpeed=0;
   }
   // Cast against nearby triangles from the imported city tiles so streets stay
@@ -3600,9 +3638,10 @@ function updateOpenCity(dt,stats) {
   }
   cityFallSpeed=0;
   player.position.y=playerGroundY===null?citySpawnPosition.y:playerGroundY+0.12;
-  player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*0.09,4,dt);
+  player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*(drifting?0.15:0.09),4,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
   actualSpeed=Math.abs(citySpeedMps)*3.6;
+  emitDriftSmoke(player,dt,citySpeedMps,steer,drifting);
   if(actualSpeed>stats.maxSpeed*0.82)takedownCharge=Math.min(100,takedownCharge+dt*20);
   takedownHud.textContent='TAKEDOWN CHARGE  '+Math.floor(takedownCharge)+'%';
   cityDistance+=Math.abs(citySpeedMps)*dt;
@@ -3639,7 +3678,7 @@ function updateOpenCity(dt,stats) {
     const desired=Math.atan2(dx,dz);
     let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
     cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
-    const speed=cityWantedLevel?Math.min(43,29+cityWantedLevel*2):0;
+    const speed=cityWantedLevel?Math.min(43,29+cityWantedLevel*2)*VEHICLE_SPEED_SCALE:0;
     let nextX=oldCopX+Math.sin(cop.mesh.rotation.y)*speed*dt;
     let nextZ=oldCopZ+Math.cos(cop.mesh.rotation.y)*speed*dt;
     let roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:cop.roadMesh});
@@ -3755,7 +3794,7 @@ p.velocity.y -= 12 * dt;
 p.mesh.position.addScaledVector(p.velocity, dt);
 if (p.smoke) {
   const fade = THREE.MathUtils.clamp(p.life / (p.maxLife || 1.85), 0, 1);
-  p.mesh.material.opacity = 0.48 * fade;
+  p.mesh.material.opacity = (p.smokeOpacity ?? 0.48) * fade;
   const scale = (p.startScale || 0.3) * (1 + (1 - fade) * 1.8);
   p.mesh.scale.setScalar(scale / Math.max(0.001, p.startScale || 0.3));
 }
@@ -3779,7 +3818,7 @@ nitroActive = keys.nitro && nitro > 0 && !keys.brake;
 if (nitroActive) nitro = Math.max(0, nitro - dt * 34);
 else nitro = Math.min(100, nitro + dt * 8);
 const throttle = autoAccel || keys.accelerate;
-const maxSpeed = stats.maxSpeed + (nitroActive ? 45 : 0);
+const maxSpeed = stats.maxSpeed + (nitroActive ? 45 * VEHICLE_SPEED_SCALE : 0);
 if (actualSpeed >= maxSpeed * 0.82) takedownCharge = Math.min(100, takedownCharge + dt * 20);
 if (!takedownHud) {
   takedownHud = document.createElement('div');
@@ -3909,7 +3948,7 @@ function createCityAvatar() {
 }
 function exitCityVehicle() {
   if(cityOnFoot||!player)return;
-  cityOnFoot=true;cityFootHeading=cityHeading;citySpeedMps=0;actualSpeed=0;
+  cityOnFoot=true;cityFootHeading=cityHeading;citySpeedMps=0;cityDriftSlip=0;actualSpeed=0;
   cityParkedCar=createCar(cars.find(c=>c.id===selectedCar)?.color||0x2877b9,true,cars.find(c=>c.id===selectedCar)?.modelStyle||0);
   cityParkedCar.position.copy(player.position);cityParkedCar.rotation.copy(player.rotation);scene.add(cityParkedCar);
   player.visible=false;
@@ -3923,7 +3962,7 @@ function enterCityVehicle(target) {
   if(player)player.visible=false;
   player=target;player.visible=true;
   player.position.y=citySafeGroundY(player.position.x,player.position.z);
-  cityHeading=player.rotation.y;citySpeedMps=0;cityOnFoot=false;
+  cityHeading=player.rotation.y;citySpeedMps=0;cityDriftSlip=0;cityOnFoot=false;
   player.userData.body=player.userData.body||null;
   return true;
 }
