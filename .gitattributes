@@ -1,1 +1,2 @@
 *.glb filter=lfs diff=lfs merge=lfs -text
+assets/drive-for-speed-city.glb -filter -diff -merge -text
