@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
@@ -468,7 +467,7 @@ function finishLoadingScreen() {
         cityMapRetryButton.addEventListener('click', () => {
           cityMapRetryButton.style.display = 'none';
           cityMapLoadFailed = false;
-          $('loading-message').textContent = 'Loading Camellia city streets…';
+          $('loading-message').textContent = 'Loading Drive for Speed city streets…';
           if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
           cityRoot = null;
           createOpenCityWorld();
@@ -2622,8 +2621,8 @@ function updateTraffic(dt, previousPlayer) {
 // --- Open city driving world -------------------------------------------------
 // The legacy scrolling highway remains available as a fallback, but the escape
 // mode now runs on a real world-space street grid.
-// Build spatially hashed wall-triangle colliders from the imported city meshes.
-// Road, sidewalk and roof faces are omitted so they cannot create phantom borders.
+// Use the supplied city map's named road meshes and only building/block walls
+// for collisions, so roofs, foliage, sidewalks, and decorative edges stay clear.
 const CITY_COLLISION_CELL = 24;
 const CITY_GROUND_CELL = CITY_COLLISION_CELL;
 let cityCollisionGrid = new Map();
@@ -2634,6 +2633,8 @@ let cityWaterMeshGrid = new Map();
 let cityRoadCandidates = [];
 let cityWaterSurfaceMeshes = [];
 let cityCollisionSources = [];
+let cityVegetationChunks = [];
+let cityVegetationCullTimer = 0;
 let cityGroundFloorY = 0;
 let cityGroundCeilingY = 0;
 let cityRespawnCooldown = 0;
@@ -2656,7 +2657,10 @@ function makeWorldTriangleMesh(vertices, name, material, userData = {}) {
   mesh.userData = userData;
   return mesh;
 }
-function createCamelliaRoadWaterSurfaces(root) {
+function isDriveForSpeedRoadMaterial(name) {
+  return /^(street(?:\s*\d+)?|street texture|parking|pista)$/i.test((name||'').trim());
+}
+function createDriveForSpeedRoadWaterSurfaces(root) {
   root.updateMatrixWorld(true);
   const chunks = {road:new Map(),water:new Map()};
   const roadMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
@@ -2676,7 +2680,7 @@ function createCamelliaRoadWaterSurfaces(root) {
       : [{start:0,count:index ? index.count : position.count,materialIndex:0}];
     for (const group of groups) {
       const materialName = materials[group.materialIndex]?.name;
-      const kind = materialName === '_Gray6_2' ? 'road' : (materialName === '_4' || materialName === '_24' ? 'water' : null);
+      const kind = isDriveForSpeedRoadMaterial(materialName) ? 'road' : (/^water/i.test((materialName||'').trim()) ? 'water' : null);
       if (!kind) continue;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
       for (let i = group.start; i + 2 < end; i += 3) {
@@ -2688,7 +2692,7 @@ function createCamelliaRoadWaterSurfaces(root) {
         c.fromBufferAttribute(position, ic).applyMatrix4(object.matrixWorld);
         if (kind === 'road') {
           edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
-          if (normal.y < 0.88) continue;
+          if (Math.abs(normal.y) < 0.88) continue;
         }
         const centerX = (a.x+b.x+c.x)/3, centerY = (a.y+b.y+c.y)/3, centerZ = (a.z+b.z+c.z)/3;
         const cellX = Math.floor(centerX/CITY_GROUND_CELL), cellZ = Math.floor(centerZ/CITY_GROUND_CELL);
@@ -2696,7 +2700,8 @@ function createCamelliaRoadWaterSurfaces(root) {
         let chunk = chunks[kind].get(key);
         if (!chunk) chunks[kind].set(key,chunk={vertices:[],first:null,triangles:0});
         if (!chunk.first) chunk.first={x:centerX,y:centerY,z:centerZ};
-        chunk.vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
+        if(kind==='road'&&normal.y<0)chunk.vertices.push(a.x,a.y,a.z,c.x,c.y,c.z,b.x,b.y,b.z);
+        else chunk.vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
         chunk.triangles++;
         if (kind === 'road') roadTriangles++; else waterTriangles++;
       }
@@ -2705,40 +2710,35 @@ function createCamelliaRoadWaterSurfaces(root) {
 
   let roadChunks = 0, waterChunks = 0;
   for (const [key,chunk] of chunks.road) {
-    const mesh = makeWorldTriangleMesh(chunk.vertices,'Camellia_Road_'+key,roadMaterial,{
+    const mesh = makeWorldTriangleMesh(chunk.vertices,'DriveForSpeed_Road_'+key,roadMaterial,{
       cityRoadSurface:true,cityRoadCandidate:chunk.first
     });
     cityRoot.add(mesh); roadChunks++;
   }
   for (const [key,chunk] of chunks.water) {
-    const mesh = makeWorldTriangleMesh(chunk.vertices,'Camellia_Water_'+key,waterMaterial,{cityWaterSurface:true});
+    const mesh = makeWorldTriangleMesh(chunk.vertices,'DriveForSpeed_Water_'+key,waterMaterial,{cityWaterSurface:true});
     cityRoot.add(mesh); waterChunks++;
   }
-  console.info('Prepared named Camellia road and water surfaces:',{roadTriangles,roadChunks,waterTriangles,waterChunks});
+  console.info('Prepared Drive for Speed road and water surfaces:',{roadTriangles,roadChunks,waterTriangles,waterChunks});
   return {roadTriangles,roadChunks,waterTriangles,waterChunks};
 }
-function createCamelliaCollisionSources(collisionRoot, scale, position) {
-  collisionRoot.scale.setScalar(scale);
-  collisionRoot.position.copy(position);
-  collisionRoot.updateMatrixWorld(true);
+function createDriveForSpeedCollisionSources(root) {
+  root.updateMatrixWorld(true);
   const chunks = new Map();
-  const hullBounds = new THREE.Box3(), hullSize = new THREE.Vector3();
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
   const material = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
-  let hullCount = 0, wallTriangles = 0;
+  let wallTriangles = 0, sourceMeshes = 0;
 
-  collisionRoot.traverse((object) => {
-    if (!object.isMesh || !object.geometry?.attributes?.position || !/_hull_00$/i.test(object.name||'')) return;
-    if ((object.name||'').toLowerCase() === 'mesh1_hull_00') return;
-    hullBounds.setFromObject(object);
-    if (hullBounds.isEmpty()) return;
-    hullBounds.getSize(hullSize);
-    if (hullSize.x < 0.8 || hullSize.z < 0.8 || hullSize.y <= 1.25 || hullSize.x > 160 || hullSize.z > 160 || hullSize.y > 240) return;
-    hullCount++;
+  root.traverse((object) => {
+    if (!object.isMesh || !object.geometry?.attributes?.position) return;
     const geometry = object.geometry, positionAttribute = geometry.attributes.position, index = geometry.index;
+    const materials=Array.isArray(object.material)?object.material:[object.material];
     const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count}];
     for (const group of groups) {
+      const materialName=(materials[group.materialIndex]?.name||'').trim();
+      if(!/^building$/i.test(materialName)&&!/^blocks$/i.test(materialName))continue;
+      sourceMeshes++;
       const end = Math.min(group.start+group.count,index ? index.count : positionAttribute.count);
       for (let i=group.start;i+2<end;i+=3) {
         const ia=index?index.getX(i):i, ib=index?index.getX(i+1):i+1, ic=index?index.getX(i+2):i+2;
@@ -2756,10 +2756,10 @@ function createCamelliaCollisionSources(collisionRoot, scale, position) {
     }
   });
 
-  cityCollisionSources = [...chunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'Camellia_Building_Walls_'+key,material,{cityWallCollider:true}));
-  if (!hullCount || !wallTriangles) throw new Error('Camellia collision FBX contains no usable building wall hulls.');
-  console.info('Prepared dedicated Camellia building hitboxes:',{hullCount,wallColliderCells:cityCollisionSources.length,wallTriangles});
-  return {hullCount,wallTriangles};
+  cityCollisionSources = [...chunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Building_Walls_'+key,material,{cityWallCollider:true}));
+  if (!sourceMeshes || !wallTriangles) throw new Error('Drive for Speed map contains no usable building wall surfaces.');
+  console.info('Prepared Drive for Speed building/block hitboxes:',{sourceMeshes,wallColliderCells:cityCollisionSources.length,wallTriangles});
+  return {sourceMeshes,wallTriangles};
 }
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
@@ -3125,44 +3125,42 @@ function failCityMapLoad(error) {
   cityWaterMeshGrid.clear();
   cityRoadCandidates = [];
   cityWaterSurfaceMeshes = [];
+  cityVegetationChunks = [];
+  cityVegetationCullTimer = 0;
   if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
   cityRoot = null;
-  console.error('Camellia city or collision FBX could not be prepared:', error);
+  console.error('Drive for Speed city GLB could not be prepared:', error);
   finishLoadingScreen();
 }
 
 function createOpenCityWorld() {
   if (cityWorldReady || cityWorldLoading) return;
   cityWorldLoading = true;
+  cityVegetationChunks = [];
+  cityVegetationCullTimer = 0;
   for (const object of [...roads, ...scenery, ...grounds]) object.visible = false;
-  $('loading-message').textContent = 'Loading Camellia city streets…';
+  $('loading-message').textContent = 'Loading Drive for Speed city streets…';
   cityRoot = new THREE.Group();
-  cityRoot.name = 'camellia_city_map';
+  cityRoot.name = 'drive_for_speed_city_map';
   scene.add(cityRoot);
 
-  const mapUrl = './assets/camellia-city/Camellia City.fbx';
-  const collisionUrl = './assets/camellia-city/Camellia_City_collision.fbx';
-  const fbxLoader = new FBXLoader();
-  fbxLoader.load(mapUrl, (map) => {
+  const mapUrl = './assets/drive-for-speed-city.glb';
+  gltfLoader.load(mapUrl, (gltf) => {
     try {
-      map.name = 'Camellia_City';
+      const map = gltf.scene;
+      map.name = 'Drive_For_Speed_City';
       map.updateMatrixWorld(true);
       const sourceBounds = new THREE.Box3().setFromObject(map);
       const size = sourceBounds.getSize(new THREE.Vector3());
       const center = sourceBounds.getCenter(new THREE.Vector3());
       const horizontalSize = Math.max(size.x,size.z);
       if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01 || !Number.isFinite(size.y)) {
-        throw new Error('Camellia City FBX has invalid dimensions or orientation.');
+        throw new Error('Drive for Speed city GLB has invalid dimensions or orientation.');
       }
 
       const mapScale = 1400 / horizontalSize;
-      const mapPosition = new THREE.Vector3(
-        -center.x * mapScale,
-        -sourceBounds.min.y * mapScale,
-        -center.z * mapScale
-      );
       map.scale.setScalar(mapScale);
-      map.position.copy(mapPosition);
+      map.position.set(-center.x*mapScale,-sourceBounds.min.y*mapScale,-center.z*mapScale);
       map.traverse((object) => {
         if (!object.isMesh) return;
         object.castShadow = false;
@@ -3172,64 +3170,62 @@ function createOpenCityWorld() {
       cityRoot.add(map);
       map.updateMatrixWorld(true);
 
-      const surfaceStats = createCamelliaRoadWaterSurfaces(map);
+      const surfaceStats = createDriveForSpeedRoadWaterSurfaces(map);
       if (surfaceStats.roadTriangles < 100 || surfaceStats.waterTriangles < 1) {
-        throw new Error('Camellia City is missing its named road or water material surfaces.');
+        throw new Error('Drive for Speed city is missing its named street or water surfaces.');
+      }
+      const collisionStats = createDriveForSpeedCollisionSources(map);
+      cityRoot.updateMatrixWorld(true);
+      const bounds = new THREE.Box3();
+      map.traverse((object)=>{
+        if(!object.isMesh||!/^D4S_Vegetation_/i.test(object.name||''))return;
+        bounds.setFromObject(object);
+        cityVegetationChunks.push({mesh:object,center:bounds.getCenter(new THREE.Vector3())});
+      });
+
+      buildCityCollisionGrid(cityRoot);
+      const spawn = findCityRoadsideSpawn(cityRoot);
+      if (!spawn || !cityRoadCandidates.length) {
+        throw new Error('Could not find a clear, supported spawn on a continuous Drive for Speed road.');
+      }
+      const spawnGroundY = cityGroundHeightAt(spawn.x,spawn.z);
+      const spawnWaterY = cityWaterHeightAt(spawn.x,spawn.z);
+      if (spawnGroundY === null || spawnWaterY !== null || Math.abs(spawnGroundY + 0.12 - spawn.y) > 0.5) {
+        throw new Error('The selected Drive for Speed spawn is not safely on dry street geometry.');
       }
 
-      fbxLoader.load(collisionUrl, (collisionRoot) => {
-        try {
-          const collisionStats = createCamelliaCollisionSources(collisionRoot,mapScale,mapPosition);
-          cityRoot.updateMatrixWorld(true);
-          buildCityCollisionGrid(cityRoot);
-          const spawn = findCityRoadsideSpawn(cityRoot);
-          if (!spawn || !cityRoadCandidates.length) {
-            throw new Error('Could not find a clear, supported spawn on a continuous Camellia road.');
-          }
-          const spawnGroundY = cityGroundHeightAt(spawn.x,spawn.z);
-          const spawnWaterY = cityWaterHeightAt(spawn.x,spawn.z);
-          if (spawnGroundY === null || spawnWaterY !== null || Math.abs(spawnGroundY + 0.12 - spawn.y) > 0.5) {
-            throw new Error('The selected Camellia spawn is not safely on dry road geometry.');
-          }
-
-          citySpawnPosition.copy(spawn);
-          cityWorldReady = true;
-          cityWorldLoading = false;
-          cityMapLoadFinished = true;
-          cityMapLoadFailed = false;
-          if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
-          if (running && player) {
-            player.position.copy(citySpawnPosition);
-            player.rotation.set(0,citySpawnHeading,0);
-            cityHeading = citySpawnHeading;
-            citySpeedMps = 0;
-          }
-          console.info('Loaded Camellia City with named roads, water and dedicated building hulls.',{
-            sourceSize:size.toArray(),
-            scale:mapScale,
-            hitboxes:collisionStats.hullCount,
-            wallTriangles:collisionStats.wallTriangles,
-            roadChunks:surfaceStats.roadChunks,
-            roadCandidates:cityRoadCandidates.length,
-            waterChunks:surfaceStats.waterChunks,
-            spawn:citySpawnPosition.toArray(),
-            spawnHeading:citySpawnHeading
-          });
-          finishLoadingScreen();
-        } catch (error) {
-          failCityMapLoad(error);
-        }
-      }, (event) => {
-        if (event.total) $('loading-message').textContent = 'Loading Camellia building hitboxes… ' + Math.round(event.loaded/event.total*100) + '%';
-      }, failCityMapLoad);
+      citySpawnPosition.copy(spawn);
+      cityWorldReady = true;
+      cityWorldLoading = false;
+      cityMapLoadFinished = true;
+      cityMapLoadFailed = false;
+      if (cityMapRetryButton) cityMapRetryButton.style.display = 'none';
+      if (running && player) {
+        player.position.copy(citySpawnPosition);
+        player.rotation.set(0,citySpawnHeading,0);
+        cityHeading = citySpawnHeading;
+        citySpeedMps = 0;
+      }
+      console.info('Loaded optimized Drive for Speed city map.',{
+        sourceSize:size.toArray(),
+        scale:mapScale,
+        hitboxCells:cityCollisionCount,
+        wallTriangles:collisionStats.wallTriangles,
+        roadChunks:surfaceStats.roadChunks,
+        roadCandidates:cityRoadCandidates.length,
+        waterChunks:surfaceStats.waterChunks,
+        vegetationChunks:cityVegetationChunks.length,
+        spawn:citySpawnPosition.toArray(),
+        spawnHeading:citySpawnHeading
+      });
+      finishLoadingScreen();
     } catch (error) {
       failCityMapLoad(error);
     }
   }, (event) => {
-    if (event.total) $('loading-message').textContent = 'Loading Camellia city streets… ' + Math.round(event.loaded/event.total*100) + '%';
+    if (event.total) $('loading-message').textContent = 'Loading Drive for Speed city streets… ' + Math.round(event.loaded/event.total*100) + '%';
   }, failCityMapLoad);
-}
-function createCityTrafficModel(fallbackColor,style=0) {
+}function createCityTrafficModel(fallbackColor,style=0) {
   const fleet=activeTrafficVehicles?.length?activeTrafficVehicles:trafficVehicles;
   if(!fleet.length)return createCar(fallbackColor,false,style);
   const source=fleet[Math.floor(Math.random()*fleet.length)];
@@ -3491,8 +3487,21 @@ function updateDragRace(dt) {
     window.setTimeout(()=>{dragRaceHud.style.display='none';},2500);
   } else dragRaceHud.textContent='DRAG RACE · '+dragRaceTime.toFixed(2)+'s';
 }
+function updateCityVegetation(dt) {
+  if (!cityVegetationChunks.length || !player) return;
+  cityVegetationCullTimer -= dt;
+  if (cityVegetationCullTimer > 0) return;
+  cityVegetationCullTimer = 0.5;
+  const position = cityOnFoot && cityAvatar ? cityAvatar.position : player.position;
+  const maxDistanceSq = 245 * 245;
+  for (const chunk of cityVegetationChunks) {
+    const dx=chunk.center.x-position.x,dz=chunk.center.z-position.z;
+    chunk.mesh.visible=dx*dx+dz*dz<=maxDistanceSq;
+  }
+}
 function updateOpenCity(dt,stats) {
   cityRespawnCooldown=Math.max(0,cityRespawnCooldown-dt);
+  updateCityVegetation(dt);
   if(cityOnFoot){updateCityOnFoot(dt);return;}
   if(!takedownHud) {
     takedownHud=document.createElement('div');
