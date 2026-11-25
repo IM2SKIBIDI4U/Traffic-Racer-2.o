@@ -8,6 +8,8 @@ const modes = [
   { id: 'overhead', label: 'OVERHEAD', position: new THREE.Vector3(0, 11, -5), target: new THREE.Vector3(0, 0, 8), fov: 62 },
 ];
 let selected = 0;
+const vehicleScale = new THREE.Vector3();
+const CAMERA_REFERENCE_VEHICLE_SCALE = 0.448;
 try {
   const saved = localStorage.getItem('tr-camera-mode');
   const index = modes.findIndex((mode) => mode.id === saved);
@@ -35,6 +37,10 @@ export function applyCameraMode(camera, player, dt = 0, forwardSign = -1) {
   // Mirror only the local Z offsets so every preset works in both modes.
   const positionOffset = mode.position.clone();
   const targetOffset = mode.target.clone();
+  player.getWorldScale(vehicleScale);
+  const scaleCorrection = CAMERA_REFERENCE_VEHICLE_SCALE / Math.max(0.001, Math.abs(vehicleScale.x));
+  positionOffset.multiplyScalar(scaleCorrection);
+  targetOffset.multiplyScalar(scaleCorrection);
   positionOffset.z *= forwardSign;
   targetOffset.z *= forwardSign;
   const desiredPosition = player.localToWorld(positionOffset);

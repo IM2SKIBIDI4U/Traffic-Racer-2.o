@@ -4,7 +4,7 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
-const VEHICLE_SIZE_SCALE = 0.448;
+const VEHICLE_SIZE_SCALE = 0.3584;
 const VEHICLE_SPEED_SCALE = 0.4;
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
@@ -146,6 +146,7 @@ let cityDistance = 0;
 let citySpeedMps = 0;
 let cityHeading = 0;
 let cityDriftSlip = 0;
+let cityImpactBounce = 0;
 let cityFallSpeed = 0;
 let cityFootFallSpeed = 0;
 let cityWorldReady = false;
@@ -153,6 +154,7 @@ let cityWorldLoading = false;
 let cityMapLoadFinished = false;
 let cityMapLoadFailed = false;
 let cityMapRetryButton = null;
+const CITY_ROAD_SURFACE_MARKER = Object.freeze({userData:Object.freeze({cityRoadSurface:true})});
 const CITY_BLOCK = 90;
 let dragRaceActive = false;
 let dragRaceTime = 0;
@@ -1538,13 +1540,14 @@ function showMenu() {
   refreshDailyDate();
   running = false;
   paused = false;
+  updateHealthHudVisibility();
   actualSpeed = 0;
   nitroActive = false;
   Object.keys(keys).forEach((key) => { keys[key] = false; });
   showPage('main-menu');
 }
-function showGarage() { if (running) { running = false; paused = false; } renderGarage(); showPage('garage-page'); }
-function showSettings() { if (running) { running = false; paused = false; } syncSettings(); showPage('settings-page'); }
+function showGarage() { if (running) { running = false; paused = false; } updateHealthHudVisibility(); renderGarage(); showPage('garage-page'); }
+function showSettings() { if (running) { running = false; paused = false; } updateHealthHudVisibility(); syncSettings(); showPage('settings-page'); }
 function syncModeButtons() {
   $('mode-escape').classList.toggle('active',gameMode==='escape');
   $('mode-police').classList.toggle('active',gameMode==='police');
@@ -1603,6 +1606,7 @@ actualSpeed = 0;
 steerVelocity = 0;
 citySpeedMps = 0;
 cityDriftSlip = 0;
+cityImpactBounce = 0;
 cityCameraHeight = 0;
 cityFallSpeed = 0;
 cityFootFallSpeed = 0;
@@ -1660,6 +1664,7 @@ paused = false;
 // traffic afterward, but the player never starts with an empty highway.
 if (!cityWorldReady && traffic.length === 0) spawnTraffic();
 if (!cityWorldReady && gameMode === 'escape') spawnPoliceChaser(0);
+updateHealthHudVisibility();
 spawnTimer = 0.75;
 showPage('');
 if (soundEnabled) {
@@ -1691,6 +1696,7 @@ function finishGame() {
   if(resultTitle && !resultTitle.textContent)resultTitle.textContent=gameMode==='police'?'SHIFT COMPLETE':'CHASE OVER';
   running = false;
   paused = false;
+  updateHealthHudVisibility();
   actualSpeed = 0;
   steerVelocity = 0;
   nitroActive = false;
@@ -2046,6 +2052,7 @@ function damagePlayer(amount = 3) {
   const bar = $('health-bar');
   if (value) value.textContent = `${Math.ceil(playerHealth)}%`;
   if (bar) bar.style.width = `${playerHealth}%`;
+  updateHealthHudVisibility();
   const warning = $('damage-warning');
   if (warning) {
     warning.classList.add('show');
@@ -2063,6 +2070,19 @@ function updateHealthDisplay() {
   const bar = $('health-bar');
   if (value) value.textContent = `${Math.ceil(playerHealth)}%`;
   if (bar) bar.style.width = `${playerHealth}%`;
+  updateHealthHudVisibility();
+}
+function isPlayerBeingChased() {
+  if(!running||paused)return false;
+  if(cityWorldReady)return cityWantedLevel>0&&cityPolice.some((cop)=>!cop.disabled);
+  return gameMode==='escape'&&policeChasers.some((unit)=>!unit.disabled);
+}
+function updateHealthHudVisibility() {
+  const visible=isPlayerBeingChased();
+  const heading=$('health-value')?.closest('.health-heading');
+  const meter=$('health-bar')?.closest('.health-meter');
+  if(heading)heading.style.display=visible?'flex':'none';
+  if(meter)meter.style.display=visible?'block':'none';
 }
 function spawnRepairPickup() {
   const pickup = new THREE.Group();
@@ -2870,7 +2890,8 @@ function createDriveForSpeedCollisionSources(root) {
     const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count,materialIndex:0}];
     for (const group of groups) {
       const materialName=(materials[group.materialIndex]?.name||'').trim();
-      if(!/^(?:building|blocks|buildings texture(?:\s+\d+)?)$/i.test(materialName))continue;
+      const obstacleMaterial=/^obstacles?$/i.test(materialName);
+      if(!obstacleMaterial&&!/^(?:building|blocks|buildings texture(?:\s+\d+)?)$/i.test(materialName))continue;
       sourceMeshes++;
       const end = Math.min(group.start+group.count,index ? index.count : positionAttribute.count);
       for (let i=group.start;i+2<end;i+=3) {
@@ -2881,7 +2902,7 @@ function createDriveForSpeedCollisionSources(root) {
         edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
         const centerX=(a.x+b.x+c.x)/3,centerZ=(a.z+b.z+c.z)/3;
         const key=Math.floor(centerX/CITY_COLLISION_CELL)+','+Math.floor(centerZ/CITY_COLLISION_CELL);
-        const chunks=Math.abs(normal.y)>0.72?ceilingChunks:wallChunks;
+        const chunks=!obstacleMaterial&&Math.abs(normal.y)>0.72?ceilingChunks:wallChunks;
         let vertices=chunks.get(key); if(!vertices)chunks.set(key,vertices=[]);
         vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
         if(chunks===ceilingChunks)ceilingTriangles++;else wallTriangles++;
@@ -3068,6 +3089,7 @@ function showCityRecoveryScreen(titleText, detailText) {
   paused=true;
   citySpeedMps=0;
   cityDriftSlip=0;
+  cityImpactBounce=0;
   actualSpeed=0;
   for(const key of Object.keys(keys))keys[key]=false;
   if(!cityRespawnScreen) {
@@ -3109,6 +3131,7 @@ function respawnCityPlayer() {
   cityHeading=citySpawnHeading;
   citySpeedMps=0;
   cityDriftSlip=0;
+  cityImpactBounce=0;
   cityFallSpeed=0;
   cityFootFallSpeed=0;
   actualSpeed=0;
@@ -3121,6 +3144,7 @@ function respawnCityPlayer() {
   if(cityChaseReasonHud)cityChaseReasonHud.style.display='none';
   for(const cop of cityPolice){scene.remove(cop.mesh);cop.disabled=true;}
   cityPolice.length=0;
+  updateHealthHudVisibility();
   cameraShake=Math.max(cameraShake,0.65);
   const toast=$('near-miss');
   if(toast){toast.textContent='WATER · RESPAWNED';toast.classList.add('show');}
@@ -3428,7 +3452,8 @@ function spawnCityTraffic() {
   mesh.position.set(road.x,groundY+0.12,road.z);
   mesh.rotation.y=heading;
   scene.add(mesh);
-  cityTraffic.push({mesh,heading,roadMesh:road.mesh,speed:(13+Math.random()*9)*VEHICLE_SPEED_SCALE,turnCooldown:4});
+  const targetSpeed=(13+Math.random()*9)*VEHICLE_SPEED_SCALE;
+  cityTraffic.push({mesh,heading,routeHeading:heading,roadMesh:road.mesh,speed:0,targetSpeed,turnCooldown:0});
 }
 function spawnCityPolice() {
   if(cityPolice.filter(p=>!p.disabled).length>=6)return;
@@ -3445,9 +3470,7 @@ function spawnCityPolice() {
   mesh.position.set(road.x,groundY+0.12,road.z);
   mesh.rotation.y=route.heading;
   scene.add(mesh);
-  // Cruisers enter the pursuit already moving so the player is not waiting
-  // for them to accelerate from a standstill.
-  cityPolice.push({mesh,heading:route.heading,roadMesh:road.mesh,speed:29*VEHICLE_SPEED_SCALE,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
+  cityPolice.push({mesh,heading:route.heading,routeHeading:route.heading,roadMesh:road.mesh,speed:0,targetSpeed:29*VEHICLE_SPEED_SCALE,health:200,disabled:false,ramCooldown:0,turnCooldown:0,lastJunction:NaN});
 }
 function spawnCityRepairPickup() {
   if(cityRepairPickups.length>=3)return;
@@ -3500,35 +3523,77 @@ function cityVehicleCollision(mesh, other, speed) {
   other.userData.cityImpact=(other.userData.cityImpact||0)+Math.min(8,speed*0.14);
   return true;
 }
+function recoilCityPlayer(impactSpeed,damage=3) {
+  const recoilSpeed=Math.min(9,Math.max(2.4,impactSpeed*0.36));
+  citySpeedMps=-Math.sign(citySpeedMps||1)*recoilSpeed;
+  cityDriftSlip*= -0.25;
+  cityImpactBounce=Math.max(cityImpactBounce,THREE.MathUtils.clamp(impactSpeed/16,0.25,1));
+  cameraShake=Math.max(cameraShake,THREE.MathUtils.clamp(0.28+impactSpeed*0.045,0.35,1.25));
+  if(hitCooldown<=0)damagePlayer(damage);
+  hitCooldown=Math.max(hitCooldown,0.55);
+}
+function cityAiSpeed(unit,limit,dt,avoidPlayer=true) {
+  const mesh=unit.mesh;
+  let target=Math.max(0,limit);
+  const heading=unit.heading??mesh.rotation.y;
+  const forwardX=Math.sin(heading),forwardZ=Math.cos(heading);
+  const sideX=Math.cos(heading),sideZ=-Math.sin(heading);
+  const consider=(otherMesh,otherUnit=null)=>{
+    if(!otherMesh||otherMesh===mesh||otherUnit?.disabled)return;
+    const dx=otherMesh.position.x-mesh.position.x,dz=otherMesh.position.z-mesh.position.z;
+    const ahead=dx*forwardX+dz*forwardZ;
+    if(ahead<=0)return;
+    const side=Math.abs(dx*sideX+dz*sideZ);
+    const ownWidth=mesh.userData.collisionHalfWidth||0.42;
+    const otherWidth=otherMesh.userData.collisionHalfWidth||0.42;
+    if(side>ownWidth+otherWidth+0.35)return;
+    const safeGap=(mesh.userData.collisionHalfLength||0.9)+
+      (otherMesh.userData.collisionHalfLength||0.9)+1.4;
+    if(ahead<safeGap+8)target=Math.min(target,THREE.MathUtils.clamp((ahead-safeGap)*1.15,0,target));
+  };
+  for(const other of cityTraffic)consider(other.mesh,other);
+  for(const cop of cityPolice)consider(cop.mesh,cop);
+  if(avoidPlayer&&!cityOnFoot&&player?.visible)consider(player);
+  const current=unit.speed||0;
+  unit.speed=THREE.MathUtils.damp(current,target,target<current?4.2:1.25,dt);
+  return unit.speed;
+}
 function advanceCityRoadVehicle(unit,speed,dt,targetHeading=null) {
   const mesh=unit.mesh;
   if(!mesh||!unit.roadMesh)return false;
   const oldX=mesh.position.x,oldZ=mesh.position.z;
   unit.turnCooldown=(unit.turnCooldown||0)-dt;
   let heading=unit.heading??mesh.rotation.y;
-  if(targetHeading!==null&&unit.turnCooldown<=0) {
-    const route=cityRoadHeadingAt({x:oldX,z:oldZ,mesh:unit.roadMesh},targetHeading);
-    if(route)heading=route.heading;
-    unit.turnCooldown=1.1;
+  if(unit.turnCooldown<=0) {
+    const route=cityRoadHeadingAt({x:oldX,z:oldZ,mesh:unit.roadMesh},targetHeading??heading);
+    if(route)unit.routeHeading=route.heading;
+    unit.turnCooldown=0.72+Math.random()*0.22;
   }
+  const desired=unit.routeHeading??targetHeading??heading;
+  const turn=THREE.MathUtils.clamp(Math.atan2(Math.sin(desired-heading),Math.cos(desired-heading)),-1.35*dt,1.35*dt);
+  heading+=turn;
   let nextX=oldX+Math.sin(heading)*speed*dt;
   let nextZ=oldZ+Math.cos(heading)*speed*dt;
   let roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:unit.roadMesh});
   if(roadY===null) {
-    const route=cityRoadHeadingAt({x:oldX,z:oldZ,mesh:unit.roadMesh},targetHeading??heading+Math.PI);
-    if(route)heading=route.heading;
-    else heading+=Math.PI;
+    const route=cityRoadHeadingAt({x:oldX,z:oldZ,mesh:unit.roadMesh},targetHeading??heading);
+    if(route)unit.routeHeading=route.heading;
+    const desiredRoute=unit.routeHeading??heading;
+    heading+=THREE.MathUtils.clamp(Math.atan2(Math.sin(desiredRoute-heading),Math.cos(desiredRoute-heading)),-1.35*dt,1.35*dt);
     nextX=oldX+Math.sin(heading)*speed*dt;
     nextZ=oldZ+Math.cos(heading)*speed*dt;
     roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:unit.roadMesh});
   }
   mesh.rotation.y=heading;
-  if(roadY!==null&&!cityBuildingBlocksPath({x:oldX,z:oldZ},{x:nextX,z:nextZ},roadY,mesh)) {
+  const blocked=roadY===null||cityBuildingBlocksPath({x:oldX,z:oldZ},{x:nextX,z:nextZ},roadY,mesh);
+  if(!blocked) {
     mesh.position.set(nextX,roadY+0.12,nextZ);
+  } else {
+    unit.turnCooldown=0;
+    unit.speed=THREE.MathUtils.damp(unit.speed||speed,0,5,dt);
   }
   unit.heading=heading;
-  mesh.rotation.y=heading;
-  return roadY!==null;
+  return !blocked;
 }
 let cityMinimap = null;
 let cityMinimapTimer = 0;
@@ -3739,6 +3804,7 @@ function updateOpenCity(dt,stats) {
   // Sample the imported city's ground triangles; the old artificial grid does
   // not match this model's streets.
   const onRoad=oldGroundY!==null;
+  const oldRoadY=cityRoadHeightAt({x:oldPosition.x,z:oldPosition.z,mesh:CITY_ROAD_SURFACE_MARKER});
   const surfaceFactor=onRoad?1:0.84;
   if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
@@ -3752,6 +3818,14 @@ function updateOpenCity(dt,stats) {
     : cityGroundPathStatus(oldPosition.x,oldPosition.z,player.position.x,player.position.z,oldGroundY);
   let playerGroundY=groundPath.groundY;
   if(groundPath.water&&cityRespawnCooldown<=0){showWaterDeathScreen();return;}
+  const nextRoadY=cityRoadHeightAt({x:player.position.x,z:player.position.z,mesh:CITY_ROAD_SURFACE_MARKER});
+  const hitRoadEdge=groundPath.supported&&cityRespawnCooldown<=0&&oldRoadY!==null&&nextRoadY===null;
+  if(hitRoadEdge) {
+    player.position.x=oldPosition.x;
+    player.position.z=oldPosition.z;
+    playerGroundY=oldGroundY;
+    recoilCityPlayer(Math.abs(citySpeedMps),2);
+  }
   if(!groundPath.supported) {
     player.position.x=oldPosition.x;
     player.position.z=oldPosition.z;
@@ -3762,17 +3836,18 @@ function updateOpenCity(dt,stats) {
   }
   // Cast against nearby triangles from the imported city tiles so streets stay
   // clear while building walls still block the player.
-  if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12,player)) {
+  if (!hitRoadEdge&&cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12,player)) {
     player.position.x = oldPosition.x;
     player.position.z = oldPosition.z;
     const impactSpeed=Math.abs(citySpeedMps);
-    citySpeedMps *= -0.16;
     playerGroundY=oldGroundY;
-    if(hitCooldown<=0){damagePlayer(impactSpeed>18?8:3);hitCooldown=0.4;cameraShake=Math.max(cameraShake,0.3);}
+    recoilCityPlayer(impactSpeed,impactSpeed>10?8:3);
   }
   cityFallSpeed=0;
   player.position.y=playerGroundY===null?citySpawnPosition.y:playerGroundY+0.12;
   player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*(drifting?0.15:0.09),4,dt);
+  cityImpactBounce=THREE.MathUtils.damp(cityImpactBounce,0,3.5,dt);
+  player.userData.body.rotation.x=THREE.MathUtils.damp(player.userData.body.rotation.x||0,-cityImpactBounce*0.18,6,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
   actualSpeed=Math.abs(citySpeedMps)*3.6;
   emitDriftSmoke(player,dt,citySpeedMps,steer,drifting);
@@ -3806,36 +3881,12 @@ function updateOpenCity(dt,stats) {
   // the player stays below the offence threshold for a while.
   for(const cop of cityPolice) {
     if(cop.disabled)continue;
-    const oldCopX=cop.mesh.position.x,oldCopZ=cop.mesh.position.z;
     const dx=player.position.x-cop.mesh.position.x,dz=player.position.z-cop.mesh.position.z;
-    const distance=Math.hypot(dx,dz);
     const desired=Math.atan2(dx,dz);
-    let delta=Math.atan2(Math.sin(desired-cop.mesh.rotation.y),Math.cos(desired-cop.mesh.rotation.y));
-    cop.mesh.rotation.y+=THREE.MathUtils.clamp(delta,-1.8*dt,1.8*dt);
-    const speed=cityWantedLevel?Math.min(43,29+cityWantedLevel*2)*VEHICLE_SPEED_SCALE:0;
-    let nextX=oldCopX+Math.sin(cop.mesh.rotation.y)*speed*dt;
-    let nextZ=oldCopZ+Math.cos(cop.mesh.rotation.y)*speed*dt;
-    let roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:cop.roadMesh});
-    if(roadY===null) {
-      cop.turnCooldown-=dt;
-      if(cop.turnCooldown<=0) {
-        const route=cityRoadHeadingAt({x:oldCopX,z:oldCopZ,mesh:cop.roadMesh},desired);
-        if(route)cop.mesh.rotation.y=route.heading;
-        cop.turnCooldown=1.1;
-      }
-      if(cop.turnCooldown>0) {
-        nextX=oldCopX+Math.sin(cop.mesh.rotation.y)*speed*dt;
-        nextZ=oldCopZ+Math.cos(cop.mesh.rotation.y)*speed*dt;
-        roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:cop.roadMesh});
-      }
-    }
-    if(roadY!==null&&!cityBuildingBlocksPath({x:oldCopX,z:oldCopZ},{x:nextX,z:nextZ},roadY,cop.mesh)) {
-      cop.mesh.position.set(nextX,roadY+0.12,nextZ);
-    } else {
-      cop.mesh.position.x=oldCopX;cop.mesh.position.z=oldCopZ;
-    }
+    const speed=cityAiSpeed(cop,cityWantedLevel?Math.min(43,29+cityWantedLevel*2)*VEHICLE_SPEED_SCALE:0,dt,false);
+    advanceCityRoadVehicle(cop,speed,dt,desired);
     if(cityVehicleCollision(player,cop.mesh,Math.abs(citySpeedMps))&&hitCooldown<=0) {
-      damagePlayer(4+cityWantedLevel);citySpeedMps*=0.78;hitCooldown=0.9;
+      recoilCityPlayer(Math.abs(citySpeedMps),4+cityWantedLevel);
     }
   }
   if(cityWantedLevel>0 && cityLawbreakingTime===0 && actualSpeed<85) {
@@ -3872,41 +3923,23 @@ function updateOpenCity(dt,stats) {
       cityTraffic.splice(botIndex,1);
       continue;
     }
-    const oldBotX=bot.mesh.position.x,oldBotZ=bot.mesh.position.z;
-    bot.turnCooldown-=dt;
-    let nextX=oldBotX+Math.sin(bot.heading)*bot.speed*dt;
-    let nextZ=oldBotZ+Math.cos(bot.heading)*bot.speed*dt;
-    let roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:bot.roadMesh});
-    if(roadY===null) {
-      if(bot.turnCooldown<=0) {
-        const route=cityRoadHeadingAt({x:oldBotX,z:oldBotZ,mesh:bot.roadMesh});
-        bot.heading=route?route.heading:bot.heading+Math.PI;
-        bot.turnCooldown=1.1;
-      }
-      nextX=oldBotX+Math.sin(bot.heading)*bot.speed*dt;
-      nextZ=oldBotZ+Math.cos(bot.heading)*bot.speed*dt;
-      roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:bot.roadMesh});
-    }
-    bot.mesh.rotation.y=bot.heading;
-    if(roadY!==null&&!cityBuildingBlocksPath({x:oldBotX,z:oldBotZ},{x:nextX,z:nextZ},roadY,bot.mesh)) {
-      bot.mesh.position.set(nextX,roadY+0.12,nextZ);
-    } else {
-      bot.mesh.position.x=oldBotX;bot.mesh.position.z=oldBotZ;
-    }
-    for(const wheel of bot.mesh.userData.wheels||[])wheel.rotation.x+=bot.speed*dt;
+    const speed=cityAiSpeed(bot,bot.targetSpeed,dt,true);
+    advanceCityRoadVehicle(bot,speed,dt);
+    for(const wheel of bot.mesh.userData.wheels||[])wheel.rotation.x+=speed*dt;
     if(cityVehicleCollision(player,bot.mesh,Math.abs(citySpeedMps))) {
-      if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
+      if(hitCooldown<=0)recoilCityPlayer(Math.abs(citySpeedMps),3);
     }
   }
   // Free-roam mode: no automatic police chase.
   updateCityMinimap(dt);
+  updateHealthHudVisibility();
   if(hitCooldown>0)hitCooldown-=dt;
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
   player.getWorldScale(cityCameraWorldScale);
   const scaleY=Math.max(0.001,Math.abs(cityCameraWorldScale.y));
   const scaleZ=Math.max(0.001,Math.abs(cityCameraWorldScale.z));
-  const defaultCameraHeight=5.2*scaleY;
-  const defaultCameraBack=10*scaleZ;
+  const defaultCameraHeight=5.2*0.448;
+  const defaultCameraBack=10*0.448;
   const behindX=-Math.sin(player.rotation.y),behindZ=-Math.cos(player.rotation.y);
   let overheadY=null;
   for(const sample of [0,0.5,1]) {
@@ -4007,6 +4040,7 @@ updateRepairPickups(dt);
 // the current frame's distance, not a one-frame-old score.
 score += actualSpeed / 3.6 * dt;
 updatePoliceChase(dt);
+updateHealthHudVisibility();
 updateProgression();
 $('score').textContent = Math.floor(score).toLocaleString();
 $('speed').textContent = Math.round(actualSpeed).toString();
@@ -4047,6 +4081,7 @@ function setControl(name, value) { keys[name] = value; }
 function togglePause() {
 if (!running) return;
 paused = !paused;
+updateHealthHudVisibility();
 if (paused) {
   Object.keys(keys).forEach((key) => { keys[key] = false; });
   showPage('pause-page');
@@ -4178,12 +4213,13 @@ function updateCityOnFoot(dt) {
   cityAvatar.rotation.y=cityFootHeading;
   player.position.copy(cityAvatar.position);
   for(const bot of cityTraffic) {
-    advanceCityRoadVehicle(bot,bot.speed,dt);
+    advanceCityRoadVehicle(bot,cityAiSpeed(bot,bot.targetSpeed,dt,true),dt);
   }
   for(const cop of cityPolice) if(!cop.disabled) {
     const dx=cityAvatar.position.x-cop.mesh.position.x,dz=cityAvatar.position.z-cop.mesh.position.z;
     const angle=Math.atan2(dx,dz);
-    advanceCityRoadVehicle(cop,Math.min(43,29+cityWantedLevel*2),dt,angle);
+    const speed=cityAiSpeed(cop,Math.min(43,29+cityWantedLevel*2)*VEHICLE_SPEED_SCALE,dt,false);
+    advanceCityRoadVehicle(cop,speed,dt,angle);
   }
   camera.position.set(cityAvatar.position.x-Math.sin(cityFootHeading)*5,cityAvatar.position.y+3.4,cityAvatar.position.z-Math.cos(cityFootHeading)*5);
   camera.lookAt(cityAvatar.position.x,cityAvatar.position.y+1.2,cityAvatar.position.z);
