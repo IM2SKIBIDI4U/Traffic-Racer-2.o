@@ -5,7 +5,7 @@ import { applyCameraMode } from './camera-modes.js';
 
 const $ = (id) => document.getElementById(id);
 const VEHICLE_SIZE_SCALE = 0.448;
-const VEHICLE_SPEED_SCALE = 0.8;
+const VEHICLE_SPEED_SCALE = 0.4;
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
 const dayColor = new THREE.Color(0x9bbdd0);
@@ -26,12 +26,33 @@ try {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 0.5));
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.82);
+renderer.setPixelRatio(renderPixelRatio);
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.BasicShadowMap;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.06;
+
+let renderSampleFrames = 0;
+let renderSampleAt = performance.now();
+function adaptRenderQuality(now) {
+  renderSampleFrames++;
+  const elapsed = now - renderSampleAt;
+  if (elapsed < 2000) return;
+  const fps = renderSampleFrames * 1000 / elapsed;
+  const deviceLimit = Math.min(window.devicePixelRatio || 1, 1.0);
+  let nextRatio = renderPixelRatio;
+  if (fps < 42) nextRatio = Math.max(0.5, renderPixelRatio - 0.08);
+  else if (fps > 57) nextRatio = Math.min(deviceLimit, renderPixelRatio + 0.04);
+  if (Math.abs(nextRatio - renderPixelRatio) >= 0.015) {
+    renderPixelRatio = nextRatio;
+    renderer.setPixelRatio(renderPixelRatio);
+    resize();
+  }
+  renderSampleFrames = 0;
+  renderSampleAt = now;
+}
 
 const hemi = new THREE.HemisphereLight(0xd8efff, 0x455448, 1.45);
 scene.add(hemi);
@@ -191,6 +212,36 @@ const locationThemes = [
 
 const material = (color, roughness = 0.65, metalness = 0.05, extra = {}) =>
   new THREE.MeshStandardMaterial({ color, roughness, metalness, ...extra });
+
+function makeVehicleShadowTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(32, 32, 2, 32, 32, 31);
+  gradient.addColorStop(0, 'rgba(0,0,0,0.42)');
+  gradient.addColorStop(0.55, 'rgba(0,0,0,0.22)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0)');
+  context.fillStyle = gradient;
+  context.fillRect(0, 0, 64, 64);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+const vehicleShadowGeometry = new THREE.PlaneGeometry(2.9, 5.2);
+const vehicleShadowMaterial = new THREE.MeshBasicMaterial({
+  map: makeVehicleShadowTexture(), transparent: true, depthWrite: false, toneMapped: false
+});
+function attachVehicleGroundShadow(vehicle) {
+  if (!vehicle || vehicle.userData.hasGroundShadow) return;
+  const shadow = new THREE.Mesh(vehicleShadowGeometry, vehicleShadowMaterial);
+  shadow.name = 'vehicle_contact_shadow';
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.y = 0.045;
+  shadow.renderOrder = 1;
+  shadow.userData.isGroundShadow = true;
+  vehicle.add(shadow);
+  vehicle.userData.hasGroundShadow = true;
+}
 
 function makeAsphalt() {
   const c = document.createElement('canvas');
@@ -368,10 +419,12 @@ function createCar(color, isPlayer = false, style = 0) {
   group.userData.body = lower;
   group.userData.bodyBaseY = lower.position.y;
   group.userData.modelStyle = style;
+  group.userData.collisionHalfHeight = 0.96 * VEHICLE_SIZE_SCALE;
   group.scale.setScalar(VEHICLE_SIZE_SCALE);
   group.userData.collisionHalfWidth = width * 0.52 * VEHICLE_SIZE_SCALE;
-  group.userData.collisionHalfLength = length * 0.47 * VEHICLE_SIZE_SCALE;
+  group.userData.collisionHalfLength = length * 0.5 * VEHICLE_SIZE_SCALE;
   group.userData.massKg = style === 3 ? 2250 : style === 2 ? 1850 : style === 1 ? 1450 : 1650;
+  attachVehicleGroundShadow(group);
   return group;
 }
 
@@ -384,7 +437,12 @@ function getPlayerVehicleLength() {
 function matchBotVehicleToPlayerSize(vehicle) {
   if (!vehicle) return vehicle;
   vehicle.updateWorldMatrix(true, true);
-  const bounds = new THREE.Box3().setFromObject(vehicle);
+  const bounds = new THREE.Box3();
+  vehicle.traverse((object)=>{
+    if(!object.isMesh||!object.geometry||object.userData.isGroundShadow)return;
+    object.geometry.computeBoundingBox();
+    if(object.geometry.boundingBox)bounds.union(object.geometry.boundingBox.clone().applyMatrix4(object.matrixWorld));
+  });
   if (bounds.isEmpty()) return vehicle;
   const size = bounds.getSize(new THREE.Vector3());
   const length = Math.max(size.x, size.z);
@@ -394,6 +452,7 @@ function matchBotVehicleToPlayerSize(vehicle) {
   vehicle.scale.multiplyScalar(ratio);
   if (Number.isFinite(vehicle.userData.collisionHalfWidth)) vehicle.userData.collisionHalfWidth *= ratio;
   if (Number.isFinite(vehicle.userData.collisionHalfLength)) vehicle.userData.collisionHalfLength *= ratio;
+  if (Number.isFinite(vehicle.userData.collisionHalfHeight)) vehicle.userData.collisionHalfHeight *= ratio;
   vehicle.updateWorldMatrix(true, true);
   return vehicle;
 }
@@ -442,7 +501,7 @@ function createPlayer() {
   playerLateral = lanes.at(2);
   placeOnRoad(player, playerLateral, 7);
   scene.add(player);
-  player.userData.syntheticChildren = [...player.children];
+  player.userData.syntheticChildren = player.children.filter((child)=>!child.userData.isGroundShadow);
   applyPlayerCar(selectedCar);
   attachPlayerTurnSignals();
   setPlayerPoliceLights(gameMode === 'police');
@@ -605,8 +664,10 @@ function prepareTrafficModel(source) {
       object.receiveShadow = true;
     }
   });
-  model.userData.collisionHalfWidth = Math.max(0.8 * VEHICLE_SIZE_SCALE, scaledSize.x * 0.46);
-  model.userData.collisionHalfLength = scaledSize.z * 0.47;
+  model.userData.collisionHalfWidth = scaledSize.x * 0.49;
+  model.userData.collisionHalfLength = scaledSize.z * 0.5;
+  model.userData.collisionHalfHeight = scaledSize.y * 0.48;
+  attachVehicleGroundShadow(model);
   return model;
 }
 function loadTrafficModels() {
@@ -766,8 +827,10 @@ function loadTrafficModels() {
           wrapper.name = object.name || `vehicle_${index}`;
           wrapper.add(pivot);
           wrapper.userData.wheels = getTrafficWheels(wrapper);
-          wrapper.userData.collisionHalfWidth = Math.min(1.05 * VEHICLE_SIZE_SCALE, Math.max(0.75 * VEHICLE_SIZE_SCALE, finalSize.x * 0.42));
-          wrapper.userData.collisionHalfLength = Math.min(2.4 * VEHICLE_SIZE_SCALE, Math.max(1.6 * VEHICLE_SIZE_SCALE, finalSize.z * 0.44));
+          wrapper.userData.collisionHalfWidth = finalSize.x * 0.49;
+          wrapper.userData.collisionHalfLength = finalSize.z * 0.5;
+          wrapper.userData.collisionHalfHeight = finalSize.y * 0.48;
+          attachVehicleGroundShadow(wrapper);
           matchBotVehicleToPlayerSize(wrapper);
 
           trafficVehicles.push(wrapper);
@@ -834,7 +897,7 @@ for (const item of Array.isArray(object.material) ? object.material : [object.ma
 });
 }
 const replacement = createCar(spec.color, true, spec.modelStyle);
-const children = [...replacement.children];
+const children = replacement.children.filter((child)=>!child.userData.isGroundShadow);
 for (const child of children) {
 replacement.remove(child);
 player.add(child);
@@ -847,6 +910,7 @@ player.userData.bodyBaseY = replacement.userData.bodyBaseY;
 player.userData.modelStyle = replacement.userData.modelStyle;
 player.userData.collisionHalfWidth = replacement.userData.collisionHalfWidth;
 player.userData.collisionHalfLength = replacement.userData.collisionHalfLength;
+player.userData.collisionHalfHeight = replacement.userData.collisionHalfHeight;
 }
 if (player.userData.starterModel) {
 player.remove(player.userData.starterModel);
@@ -1299,6 +1363,7 @@ function spawnTraffic() {
     car.userData.wheels = getTrafficWheels(car);
     car.userData.collisionHalfWidth = source.userData.collisionHalfWidth;
     car.userData.collisionHalfLength = source.userData.collisionHalfLength;
+    car.userData.collisionHalfHeight = source.userData.collisionHalfHeight;
   } else {
     car = createCar(colors[Math.floor(Math.random() * colors.length)], false, Math.floor(Math.random() * 4));
     // Traffic heading is applied once below through trafficDirectionOffset.
@@ -1381,6 +1446,7 @@ const list = $('car-list');
 list.replaceChildren();
 for (const car of cars) {
 const isOwned = owned.has(car.id);
+const displayedStats = effectiveCarStats(car);
 const button = document.createElement('button');
 button.className = 'car-card' + (selectedCar === car.id ? ' selected' : '');
 button.style.setProperty('--car-color', '#' + car.color.toString(16).padStart(6, '0'));
@@ -1389,7 +1455,7 @@ button.innerHTML =
 '<span class="car-swatch"></span>' +
 '<span class="car-name">' + car.name + '</span>' +
 '<span class="car-cost ' + (isOwned ? 'owned' : '') + '">' + state + '</span>' +
-'<span class="car-cost">' + car.maxSpeed + ' top · ' + car.acceleration + ' accel</span>';
+'<span class="car-cost">' + Math.round(displayedStats.maxSpeed) + ' top · ' + Math.round(displayedStats.acceleration) + ' accel</span>';
 button.addEventListener('click', () => {
 if (!isOwned && credits < car.cost) {
 button.querySelector('.car-cost').textContent = 'NEED ' + (car.cost - credits).toLocaleString() + ' MORE';
@@ -1537,6 +1603,7 @@ actualSpeed = 0;
 steerVelocity = 0;
 citySpeedMps = 0;
 cityDriftSlip = 0;
+cityCameraHeight = 0;
 cityFallSpeed = 0;
 cityFootFallSpeed = 0;
 cityHeading = 0;
@@ -2557,10 +2624,10 @@ function updateTraffic(dt, previousPlayer) {
     const oldState = oldPositions.get(item);
     const prevRelZ = oldState.z - previousPlayer.z;
     const nextRelZ = newZ - 7;
-    const playerHalfLength = (player.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)) * 0.88;
-    const botHalfLength = (item.mesh.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE)) * 0.88;
-    const playerHalfWidth = (player.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE)) * 0.9;
-    const botHalfWidth = (item.mesh.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE)) * 0.9;
+    const playerHalfLength = (player.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE));
+    const botHalfLength = (item.mesh.userData.collisionHalfLength || (2.1 * VEHICLE_SIZE_SCALE));
+    const playerHalfWidth = (player.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE));
+    const botHalfWidth = (item.mesh.userData.collisionHalfWidth || (1.05 * VEHICLE_SIZE_SCALE));
     const combinedLength = playerHalfLength + botHalfLength;
     const combinedWidth = playerHalfWidth + botHalfWidth;
     const dxStart = previousPlayer.x - oldState.lateral;
@@ -2686,6 +2753,7 @@ function updateTraffic(dt, previousPlayer) {
 const CITY_COLLISION_CELL = 24;
 const CITY_GROUND_CELL = CITY_COLLISION_CELL;
 let cityCollisionGrid = new Map();
+let cityCeilingGrid = new Map();
 let cityCollisionCount = 0;
 let cityGroundGrid = new Map();
 let cityRoadMeshGrid = new Map();
@@ -2693,6 +2761,8 @@ let cityWaterMeshGrid = new Map();
 let cityRoadCandidates = [];
 let cityWaterSurfaceMeshes = [];
 let cityCollisionSources = [];
+let cityCeilingSources = [];
+let cityCameraHeight = 0;
 let cityVegetationChunks = [];
 let cityVegetationCullTimer = 0;
 let cityGroundFloorY = 0;
@@ -2705,6 +2775,8 @@ let cityRespawnDetailNode = null;
 const cityGroundRaycaster = new THREE.Raycaster();
 const cityGroundNormalMatrix = new THREE.Matrix3();
 const cityCollisionRaycaster = new THREE.Raycaster();
+const cityCeilingRaycaster = new THREE.Raycaster();
+const cityCameraWorldScale = new THREE.Vector3();
 let citySpawnPosition = new THREE.Vector3(0, 0, 0);
 let citySpawnHeading = 0;
 function makeWorldTriangleMesh(vertices, name, material, userData = {}) {
@@ -2784,11 +2856,12 @@ function createDriveForSpeedRoadWaterSurfaces(root) {
 }
 function createDriveForSpeedCollisionSources(root) {
   root.updateMatrixWorld(true);
-  const chunks = new Map();
+  const wallChunks = new Map();
+  const ceilingChunks = new Map();
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
   const material = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
-  let wallTriangles = 0, sourceMeshes = 0;
+  let wallTriangles = 0, ceilingTriangles = 0, sourceMeshes = 0;
 
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
@@ -2797,7 +2870,7 @@ function createDriveForSpeedCollisionSources(root) {
     const groups = geometry.groups.length ? geometry.groups : [{start:0,count:index ? index.count : positionAttribute.count,materialIndex:0}];
     for (const group of groups) {
       const materialName=(materials[group.materialIndex]?.name||'').trim();
-      if(!/^building$/i.test(materialName)&&!/^blocks$/i.test(materialName))continue;
+      if(!/^(?:building|blocks|buildings texture(?:\s+\d+)?)$/i.test(materialName))continue;
       sourceMeshes++;
       const end = Math.min(group.start+group.count,index ? index.count : positionAttribute.count);
       for (let i=group.start;i+2<end;i+=3) {
@@ -2806,23 +2879,25 @@ function createDriveForSpeedCollisionSources(root) {
         b.fromBufferAttribute(positionAttribute,ib).applyMatrix4(object.matrixWorld);
         c.fromBufferAttribute(positionAttribute,ic).applyMatrix4(object.matrixWorld);
         edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
-        if (Math.abs(normal.y) > 0.72) continue;
         const centerX=(a.x+b.x+c.x)/3,centerZ=(a.z+b.z+c.z)/3;
         const key=Math.floor(centerX/CITY_COLLISION_CELL)+','+Math.floor(centerZ/CITY_COLLISION_CELL);
+        const chunks=Math.abs(normal.y)>0.72?ceilingChunks:wallChunks;
         let vertices=chunks.get(key); if(!vertices)chunks.set(key,vertices=[]);
         vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
-        wallTriangles++;
+        if(chunks===ceilingChunks)ceilingTriangles++;else wallTriangles++;
       }
     }
   });
 
-  cityCollisionSources = [...chunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Building_Walls_'+key,material,{cityWallCollider:true}));
+  cityCollisionSources = [...wallChunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Building_Walls_'+key,material,{cityWallCollider:true}));
+  cityCeilingSources = [...ceilingChunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Camera_Ceilings_'+key,material,{cityCameraCeiling:true}));
   if (!sourceMeshes || !wallTriangles) throw new Error('Drive for Speed map contains no usable building wall surfaces.');
-  console.info('Prepared Drive for Speed building/block hitboxes:',{sourceMeshes,wallColliderCells:cityCollisionSources.length,wallTriangles});
-  return {sourceMeshes,wallTriangles};
+  console.info('Prepared Drive for Speed building/block hitboxes and tunnel ceilings:',{sourceMeshes,wallColliderCells:cityCollisionSources.length,wallTriangles,cameraCeilingCells:cityCeilingSources.length,ceilingTriangles});
+  return {sourceMeshes,wallTriangles,ceilingTriangles};
 }
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
+  cityCeilingGrid.clear();
   cityCollisionCount = 0;
   cityGroundGrid.clear();
   cityRoadMeshGrid.clear();
@@ -2877,6 +2952,11 @@ function buildCityCollisionGrid(root) {
     addBoundsToGrid(cityCollisionGrid,collider,bounds,CITY_COLLISION_CELL);
     cityCollisionCount++;
   }
+  for (const mesh of cityCeilingSources) {
+    bounds.setFromObject(mesh);
+    if (bounds.isEmpty()) continue;
+    addBoundsToGrid(cityCeilingGrid,mesh,bounds,CITY_COLLISION_CELL);
+  }
   console.info('Prepared city road samples, water surfaces and building hitboxes:', cityRoadCandidates.length, cityGroundGrid.size, cityWaterSurfaceMeshes.length, cityCollisionCount);
 }
 function cityGroundMeshesAt(x, z) {
@@ -2898,6 +2978,21 @@ function citySurfaceMeshesAt(grid, x, z) {
     for (const mesh of grid.get((cellX + ox) + ',' + (cellZ + oz)) || []) candidates.add(mesh);
   }
   return [...candidates];
+}
+function cityCameraCeilingAt(x,y,z) {
+  const candidates=new Set(citySurfaceMeshesAt(cityRoadMeshGrid,x,z));
+  const cellX=Math.floor(x/CITY_COLLISION_CELL),cellZ=Math.floor(z/CITY_COLLISION_CELL);
+  for(let ox=-1;ox<=1;ox++)for(let oz=-1;oz<=1;oz++) {
+    for(const mesh of cityCeilingGrid.get((cellX+ox)+','+(cellZ+oz))||[])candidates.add(mesh);
+  }
+  if(!candidates.size)return null;
+  cityCeilingRaycaster.ray.origin.set(x,y+0.9,z);
+  cityCeilingRaycaster.ray.direction.set(0,1,0);
+  cityCeilingRaycaster.near=0.02;
+  cityCeilingRaycaster.far=8;
+  const hit=cityCeilingRaycaster.intersectObjects([...candidates],false)
+    .find((intersection)=>intersection.point.y>y+1.65);
+  return hit?.point.y??null;
 }
 function cityWaterHeightAt(x,z) {
   if (!cityWaterSurfaceMeshes.length) return null;
@@ -3143,20 +3238,28 @@ function cityPositionBlocked(x, z, groundY = citySpawnPosition.y) {
   }
   return false;
 }
-function cityBuildingBlocksPath(start, end, groundY) {
+function cityBuildingBlocksPath(start, end, groundY, vehicle = null) {
   const dx = end.x - start.x, dz = end.z - start.z;
   const distance = Math.hypot(dx,dz);
   if (distance < 0.025) return cityPositionBlocked(end.x,end.z,groundY);
   const dirX = dx / distance, dirZ = dz / distance;
-  const sideX = -dirZ, sideZ = dirX;
-  const reach = distance + 4.3;
-  const minX = Math.min(start.x,end.x) - 4.5, maxX = Math.max(start.x,end.x) + 4.5;
-  const minZ = Math.min(start.z,end.z) - 4.5, maxZ = Math.max(start.z,end.z) + 4.5;
+  const halfWidth=Math.max(0.12,vehicle?.userData?.collisionHalfWidth??0.85);
+  const halfLength=Math.max(0.2,vehicle?.userData?.collisionHalfLength??2.1);
+  const halfHeight=Math.max(0.2,vehicle?.userData?.collisionHalfHeight??0.9);
+  const footprintRadius=Math.hypot(halfWidth,halfLength)+0.12;
+  const reach = distance + 0.08;
+  const minX = Math.min(start.x,end.x) - footprintRadius, maxX = Math.max(start.x,end.x) + footprintRadius;
+  const minZ = Math.min(start.z,end.z) - footprintRadius, maxZ = Math.max(start.z,end.z) + footprintRadius;
+  const heading=vehicle?.rotation?.y??Math.atan2(dirX,dirZ);
+  const forwardX=Math.sin(heading),forwardZ=Math.cos(heading);
+  const sideX=Math.cos(heading),sideZ=-Math.sin(heading);
+  const rayY=groundY+0.12+(vehicle?halfHeight:0.9);
+  const bodyTop=groundY+(vehicle?0.18+halfHeight*2:2.4);
   const candidates = new Set();
   for (let gx = Math.floor(minX/CITY_COLLISION_CELL); gx <= Math.floor(maxX/CITY_COLLISION_CELL); gx++) {
     for (let gz = Math.floor(minZ/CITY_COLLISION_CELL); gz <= Math.floor(maxZ/CITY_COLLISION_CELL); gz++) {
       for (const collider of cityCollisionGrid.get(gx + ',' + gz) || []) {
-        if (collider.maxY < groundY + 0.15 || collider.minY > groundY + 2.4) continue;
+        if (collider.maxY < groundY + 0.12 || collider.minY > bodyTop) continue;
         if (maxX < collider.minX || minX > collider.maxX || maxZ < collider.minZ || minZ > collider.maxZ) continue;
         candidates.add(collider.mesh);
       }
@@ -3166,10 +3269,13 @@ function cityBuildingBlocksPath(start, end, groundY) {
   const meshes = [...candidates];
   cityCollisionRaycaster.near = 0.02;
   cityCollisionRaycaster.far = reach;
-  const rayStartX = start.x - dirX*2.1;
-  const rayStartZ = start.z - dirZ*2.1;
-  for (const side of [-0.85,0,0.85]) {
-    cityCollisionRaycaster.ray.origin.set(rayStartX + sideX*side, groundY + 1.0, rayStartZ + sideZ*side);
+  const footprintSamples=[[-halfLength,-halfWidth],[-halfLength,halfWidth],[0,0],[halfLength,-halfWidth],[halfLength,halfWidth]];
+  for(const [forwardOffset,sideOffset] of footprintSamples) {
+    cityCollisionRaycaster.ray.origin.set(
+      start.x+forwardX*forwardOffset+sideX*sideOffset-dirX*0.03,
+      rayY,
+      start.z+forwardZ*forwardOffset+sideZ*sideOffset-dirZ*0.03
+    );
     cityCollisionRaycaster.ray.direction.set(dirX,0,dirZ);
     if (cityCollisionRaycaster.intersectObjects(meshes, false).some((hit) => hit.distance <= reach)) return true;
   }
@@ -3180,7 +3286,9 @@ function failCityMapLoad(error) {
   cityWorldReady = false;
   cityMapLoadFailed = true;
   cityCollisionSources = [];
+  cityCeilingSources = [];
   cityCollisionGrid.clear();
+  cityCeilingGrid.clear();
   cityCollisionCount = 0;
   cityGroundGrid.clear();
   cityRoadMeshGrid.clear();
@@ -3189,6 +3297,7 @@ function failCityMapLoad(error) {
   cityWaterSurfaceMeshes = [];
   cityVegetationChunks = [];
   cityVegetationCullTimer = 0;
+  cityCameraHeight = 0;
   if (cityRoot?.parent) cityRoot.parent.remove(cityRoot);
   cityRoot = null;
   console.error('Drive for Speed city GLB could not be prepared:', error);
@@ -3246,6 +3355,7 @@ function createOpenCityWorld() {
       });
 
       buildCityCollisionGrid(cityRoot);
+      cityCameraHeight=0;
       const spawn = findCityRoadsideSpawn(cityRoot);
       if (!spawn || !cityRoadCandidates.length) {
         throw new Error('Could not find a clear, supported spawn on a continuous Drive for Speed road.');
@@ -3295,7 +3405,9 @@ function createOpenCityWorld() {
   vehicle.userData.wheels=getTrafficWheels(vehicle);
   vehicle.userData.collisionHalfWidth=source.userData.collisionHalfWidth||1.05*VEHICLE_SIZE_SCALE;
   vehicle.userData.collisionHalfLength=source.userData.collisionHalfLength||2.1*VEHICLE_SIZE_SCALE;
+  vehicle.userData.collisionHalfHeight=source.userData.collisionHalfHeight||0.96*VEHICLE_SIZE_SCALE;
   vehicle.userData.isImportedCityModel=true;
+  attachVehicleGroundShadow(vehicle);
   return matchBotVehicleToPlayerSize(vehicle);
 }
 function spawnCityTraffic() {
@@ -3354,15 +3466,36 @@ function spawnCityRepairPickup() {
   cityRepairPickups.push(kit);
 }
 function cityVehicleCollision(mesh, other, speed) {
-  const dx=mesh.position.x-other.position.x, dz=mesh.position.z-other.position.z;
-  const distance=Math.hypot(dx,dz);
-  const hitRadius=(other.userData.isPolice?2.5:3.5)*VEHICLE_SIZE_SCALE;
-  if(distance>hitRadius || distance<0.001)return false;
-  const nx=dx/distance,nz=dz/distance;
-  mesh.position.x+=nx*(hitRadius-distance)*0.55;
-  mesh.position.z+=nz*(hitRadius-distance)*0.55;
-  other.position.x-=nx*(hitRadius-distance)*0.45;
-  other.position.z-=nz*(hitRadius-distance)*0.45;
+  const deltaX=mesh.position.x-other.position.x,deltaZ=mesh.position.z-other.position.z;
+  const firstHalfWidth=mesh.userData.collisionHalfWidth||1.05*VEHICLE_SIZE_SCALE;
+  const firstHalfLength=mesh.userData.collisionHalfLength||2.1*VEHICLE_SIZE_SCALE;
+  const secondHalfWidth=other.userData.collisionHalfWidth||1.05*VEHICLE_SIZE_SCALE;
+  const secondHalfLength=other.userData.collisionHalfLength||2.1*VEHICLE_SIZE_SCALE;
+  const firstForward={x:Math.sin(mesh.rotation.y),z:Math.cos(mesh.rotation.y)};
+  const firstSide={x:Math.cos(mesh.rotation.y),z:-Math.sin(mesh.rotation.y)};
+  const secondForward={x:Math.sin(other.rotation.y),z:Math.cos(other.rotation.y)};
+  const secondSide={x:Math.cos(other.rotation.y),z:-Math.sin(other.rotation.y)};
+  const axes=[firstForward,firstSide,secondForward,secondSide];
+  let minimumOverlap=Infinity,normalX=0,normalZ=0;
+  for(const axis of axes) {
+    const projectedDistance=deltaX*axis.x+deltaZ*axis.z;
+    const firstRadius=firstHalfWidth*Math.abs(axis.x*firstSide.x+axis.z*firstSide.z)+
+      firstHalfLength*Math.abs(axis.x*firstForward.x+axis.z*firstForward.z);
+    const secondRadius=secondHalfWidth*Math.abs(axis.x*secondSide.x+axis.z*secondSide.z)+
+      secondHalfLength*Math.abs(axis.x*secondForward.x+axis.z*secondForward.z);
+    const overlap=firstRadius+secondRadius-Math.abs(projectedDistance);
+    if(overlap<=0)return false;
+    if(overlap<minimumOverlap) {
+      minimumOverlap=overlap;
+      const sign=projectedDistance>=0?1:-1;
+      normalX=axis.x*sign;normalZ=axis.z*sign;
+    }
+  }
+  const separation=minimumOverlap+0.04;
+  mesh.position.x+=normalX*separation*0.55;
+  mesh.position.z+=normalZ*separation*0.55;
+  other.position.x-=normalX*separation*0.45;
+  other.position.z-=normalZ*separation*0.45;
   mesh.userData.cityImpact=(mesh.userData.cityImpact||0)+Math.min(12,speed*0.22);
   other.userData.cityImpact=(other.userData.cityImpact||0)+Math.min(8,speed*0.14);
   return true;
@@ -3389,7 +3522,8 @@ function advanceCityRoadVehicle(unit,speed,dt,targetHeading=null) {
     nextZ=oldZ+Math.cos(heading)*speed*dt;
     roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:unit.roadMesh});
   }
-  if(roadY!==null&&!cityBuildingBlocksPath({x:oldX,z:oldZ},{x:nextX,z:nextZ},roadY)) {
+  mesh.rotation.y=heading;
+  if(roadY!==null&&!cityBuildingBlocksPath({x:oldX,z:oldZ},{x:nextX,z:nextZ},roadY,mesh)) {
     mesh.position.set(nextX,roadY+0.12,nextZ);
   }
   unit.heading=heading;
@@ -3577,7 +3711,7 @@ function updateOpenCity(dt,stats) {
   const forward=keys.accelerate||autoAccel;
   if(keys.brake) {
     if(citySpeedMps>1.2)citySpeedMps=Math.max(0,citySpeedMps-(stats.braking/3.6+citySpeedMps*0.8)*dt);
-    else citySpeedMps=Math.max(-8,citySpeedMps-stats.acceleration/3.6*0.55*dt);
+    else citySpeedMps=Math.max(-8*VEHICLE_SPEED_SCALE,citySpeedMps-stats.acceleration/3.6*0.55*dt);
   } else if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
   else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
   const steer=(keys.left?1:0)-(keys.right?1:0);
@@ -3628,7 +3762,7 @@ function updateOpenCity(dt,stats) {
   }
   // Cast against nearby triangles from the imported city tiles so streets stay
   // clear while building walls still block the player.
-  if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12)) {
+  if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12,player)) {
     player.position.x = oldPosition.x;
     player.position.z = oldPosition.z;
     const impactSpeed=Math.abs(citySpeedMps);
@@ -3695,12 +3829,14 @@ function updateOpenCity(dt,stats) {
         roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:cop.roadMesh});
       }
     }
-    if(roadY!==null&&!cityBuildingBlocksPath({x:oldCopX,z:oldCopZ},{x:nextX,z:nextZ},roadY)) {
+    if(roadY!==null&&!cityBuildingBlocksPath({x:oldCopX,z:oldCopZ},{x:nextX,z:nextZ},roadY,cop.mesh)) {
       cop.mesh.position.set(nextX,roadY+0.12,nextZ);
     } else {
       cop.mesh.position.x=oldCopX;cop.mesh.position.z=oldCopZ;
     }
-    if(distance<3.7 && hitCooldown<=0) { damagePlayer(4+cityWantedLevel); citySpeedMps*=0.78; hitCooldown=0.9; }
+    if(cityVehicleCollision(player,cop.mesh,Math.abs(citySpeedMps))&&hitCooldown<=0) {
+      damagePlayer(4+cityWantedLevel);citySpeedMps*=0.78;hitCooldown=0.9;
+    }
   }
   if(cityWantedLevel>0 && cityLawbreakingTime===0 && actualSpeed<85) {
     cityPoliceSpawnTimer-=dt*0.35;
@@ -3751,12 +3887,12 @@ function updateOpenCity(dt,stats) {
       nextZ=oldBotZ+Math.cos(bot.heading)*bot.speed*dt;
       roadY=cityRoadHeightAt({x:nextX,z:nextZ,mesh:bot.roadMesh});
     }
-    if(roadY!==null&&!cityBuildingBlocksPath({x:oldBotX,z:oldBotZ},{x:nextX,z:nextZ},roadY)) {
+    bot.mesh.rotation.y=bot.heading;
+    if(roadY!==null&&!cityBuildingBlocksPath({x:oldBotX,z:oldBotZ},{x:nextX,z:nextZ},roadY,bot.mesh)) {
       bot.mesh.position.set(nextX,roadY+0.12,nextZ);
     } else {
       bot.mesh.position.x=oldBotX;bot.mesh.position.z=oldBotZ;
     }
-    bot.mesh.rotation.y=bot.heading;
     for(const wheel of bot.mesh.userData.wheels||[])wheel.rotation.x+=bot.speed*dt;
     if(cityVehicleCollision(player,bot.mesh,Math.abs(citySpeedMps))) {
       if(hitCooldown<=0){damagePlayer(3);hitCooldown=0.45;citySpeedMps*=0.68;cameraShake=Math.max(cameraShake,0.38);}
@@ -3766,12 +3902,35 @@ function updateOpenCity(dt,stats) {
   updateCityMinimap(dt);
   if(hitCooldown>0)hitCooldown-=dt;
   const fast=THREE.MathUtils.clamp(actualSpeed/Math.max(1,stats.maxSpeed),0,1);
-  camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0),2,dt);
+  player.getWorldScale(cityCameraWorldScale);
+  const scaleY=Math.max(0.001,Math.abs(cityCameraWorldScale.y));
+  const scaleZ=Math.max(0.001,Math.abs(cityCameraWorldScale.z));
+  const defaultCameraHeight=5.2*scaleY;
+  const defaultCameraBack=10*scaleZ;
+  const behindX=-Math.sin(player.rotation.y),behindZ=-Math.cos(player.rotation.y);
+  let overheadY=null;
+  for(const sample of [0,0.5,1]) {
+    const ceilingY=cityCameraCeilingAt(
+      player.position.x+behindX*defaultCameraBack*sample,
+      player.position.y,
+      player.position.z+behindZ*defaultCameraBack*sample
+    );
+    if(ceilingY!==null&&(overheadY===null||ceilingY<overheadY))overheadY=ceilingY;
+  }
+  const ceilingClearance=overheadY===null?Infinity:overheadY-player.position.y;
+  const tunnelFactor=Number.isFinite(ceilingClearance)
+    ? 1-THREE.MathUtils.clamp((ceilingClearance-2.2)/2.3,0,1):0;
+  const targetCameraHeight=overheadY===null?defaultCameraHeight:
+    Math.min(defaultCameraHeight,Math.max(1.15,ceilingClearance-0.78));
+  if(cityCameraHeight<=0)cityCameraHeight=defaultCameraHeight;
+  cityCameraHeight=THREE.MathUtils.damp(cityCameraHeight,targetCameraHeight,overheadY===null?3.2:11,dt);
+  const cameraBack=defaultCameraBack*(1-0.24*tunnelFactor);
+  camera.fov=THREE.MathUtils.damp(camera.fov,68+fast*7+(nitroActive?2:0)-5*tunnelFactor,2.5,dt);
   camera.updateProjectionMatrix();
   // Keep the city camera upright and behind the car regardless of a saved
   // highway/overhead camera preset.
-  const cityCameraPosition = player.localToWorld(new THREE.Vector3(0, 5.2, -10));
-  const cityCameraTarget = player.localToWorld(new THREE.Vector3(0, 1.1, 16));
+  const cityCameraPosition = player.localToWorld(new THREE.Vector3(0, cityCameraHeight/scaleY, -cameraBack/scaleZ));
+  const cityCameraTarget = player.localToWorld(new THREE.Vector3(0, 1.1/scaleY, 16/scaleZ));
   camera.position.lerp(cityCameraPosition, 1 - Math.exp(-7 * dt));
   camera.up.set(0, 1, 0);
   camera.lookAt(cityCameraTarget);
@@ -3879,6 +4038,8 @@ camera.updateProjectionMatrix();
 }
 function animate() {
 requestAnimationFrame(animate);
+const now=performance.now();
+adaptRenderQuality(now);
 update(Math.min(clock.getDelta(), 0.04));
 renderer.render(scene, camera);
 }
