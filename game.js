@@ -6,6 +6,18 @@ import { applyCameraMode } from './camera-modes.js';
 const $ = (id) => document.getElementById(id);
 const VEHICLE_SIZE_SCALE = 0.3584;
 const VEHICLE_SPEED_SCALE = 0.4;
+const CITY_MAX_DRIVABLE_STEP = 0.65;
+const GRAPHICS_QUALITY_PRESETS = Object.freeze({
+  low:    {initialPixelRatio:0.62,minPixelRatio:0.5,maxPixelRatio:0.82,shadowMapSize:0,vegetationDistance:150,weatherParticles:110,fogScale:0.86,exposure:1.02},
+  medium: {initialPixelRatio:0.84,minPixelRatio:0.55,maxPixelRatio:1.0,shadowMapSize:0,vegetationDistance:225,weatherParticles:240,fogScale:1,exposure:1.06},
+  high:   {initialPixelRatio:1.15,minPixelRatio:0.62,maxPixelRatio:1.35,shadowMapSize:1024,vegetationDistance:290,weatherParticles:360,fogScale:1.12,exposure:1.08},
+  max:    {initialPixelRatio:1.6,minPixelRatio:0.7,maxPixelRatio:1.75,shadowMapSize:2048,vegetationDistance:350,weatherParticles:420,fogScale:1.24,exposure:1.1}
+});
+let graphicsQuality = 'medium';
+try {
+  const savedGraphicsQuality = localStorage.getItem('tr-graphics-quality');
+  if (Object.prototype.hasOwnProperty.call(GRAPHICS_QUALITY_PRESETS,savedGraphicsQuality)) graphicsQuality=savedGraphicsQuality;
+} catch { /* Graphics preferences are optional. */ }
 const canvas = $('game-canvas');
 const scene = new THREE.Scene();
 const dayColor = new THREE.Color(0x9bbdd0);
@@ -26,7 +38,7 @@ try {
   document.body.innerHTML = '<p style="padding:2rem;color:white;font:16px sans-serif">This game needs a current browser with WebGL enabled.</p>';
   throw new Error('WebGL is unavailable');
 }
-let renderPixelRatio = Math.min(window.devicePixelRatio || 1, 0.82);
+let renderPixelRatio = Math.min(window.devicePixelRatio || 1, GRAPHICS_QUALITY_PRESETS[graphicsQuality].initialPixelRatio);
 renderer.setPixelRatio(renderPixelRatio);
 renderer.shadowMap.enabled = false;
 renderer.shadowMap.type = THREE.BasicShadowMap;
@@ -41,9 +53,11 @@ function adaptRenderQuality(now) {
   const elapsed = now - renderSampleAt;
   if (elapsed < 2000) return;
   const fps = renderSampleFrames * 1000 / elapsed;
-  const deviceLimit = Math.min(window.devicePixelRatio || 1, 1.0);
+  const preset=GRAPHICS_QUALITY_PRESETS[graphicsQuality];
+  const deviceLimit = Math.min(window.devicePixelRatio || 1, preset.maxPixelRatio);
+  const minimumRatio = Math.min(deviceLimit,preset.minPixelRatio);
   let nextRatio = renderPixelRatio;
-  if (fps < 42) nextRatio = Math.max(0.5, renderPixelRatio - 0.08);
+  if (fps < 42) nextRatio = Math.max(minimumRatio, renderPixelRatio - 0.08);
   else if (fps > 57) nextRatio = Math.min(deviceLimit, renderPixelRatio + 0.04);
   if (Math.abs(nextRatio - renderPixelRatio) >= 0.015) {
     renderPixelRatio = nextRatio;
@@ -65,6 +79,7 @@ sun.shadow.camera.right = 22;
 sun.shadow.camera.top = 28;
 sun.shadow.camera.bottom = -22;
 scene.add(sun);
+scene.add(sun.target);
 
 const clock = new THREE.Clock();
 const roads = [];
@@ -147,6 +162,7 @@ let citySpeedMps = 0;
 let cityHeading = 0;
 let cityDriftSlip = 0;
 let cityImpactBounce = 0;
+let citySuspensionVelocity = 0;
 let cityFallSpeed = 0;
 let cityFootFallSpeed = 0;
 let cityWorldReady = false;
@@ -1565,9 +1581,50 @@ set('auto-toggle', autoAccel ? 'ON' : 'OFF', autoAccel);
 set('road-mode-toggle', 'ONE WAY', true);
 set('night-toggle', night ? 'NIGHT' : 'DAY', night);
 set('sound-toggle', soundEnabled ? 'ON' : 'OFF', soundEnabled);
+$('graphics-quality').value=graphicsQuality;
 $('road-mode-note').textContent = roadMode === 'one-way'
 ? 'All four lanes travel in your direction.'
 : 'Two lanes each way with a double-yellow divider.';
+}
+function applyGraphicsQuality(value=graphicsQuality) {
+  if(!Object.prototype.hasOwnProperty.call(GRAPHICS_QUALITY_PRESETS,value))return;
+  graphicsQuality=value;
+  save('tr-graphics-quality',graphicsQuality);
+  const preset=GRAPHICS_QUALITY_PRESETS[graphicsQuality];
+  const deviceLimit=Math.min(window.devicePixelRatio||1,preset.maxPixelRatio);
+  renderPixelRatio=Math.min(deviceLimit,preset.initialPixelRatio);
+  renderer.setPixelRatio(renderPixelRatio);
+  const shadowsEnabled=preset.shadowMapSize>0;
+  renderer.shadowMap.enabled=shadowsEnabled;
+  renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+  sun.castShadow=shadowsEnabled;
+  if(shadowsEnabled) {
+    sun.shadow.mapSize.set(preset.shadowMapSize,preset.shadowMapSize);
+    sun.shadow.camera.left=-27;sun.shadow.camera.right=27;
+    sun.shadow.camera.top=32;sun.shadow.camera.bottom=-22;
+    sun.shadow.camera.near=0.1;sun.shadow.camera.far=100;
+    sun.shadow.bias=-0.00018;
+    sun.shadow.normalBias=0.018;
+    sun.shadow.radius=2;
+    sun.shadow.camera.updateProjectionMatrix();
+  }
+  sun.shadow.map?.dispose();
+  sun.shadow.map=null;
+  sun.shadow.needsUpdate=true;
+  scene.traverse((object)=>{
+    if(object.isMesh&&object.userData.graphicsShadowReceiver) object.receiveShadow=shadowsEnabled;
+  });
+  renderer.toneMappingExposure=preset.exposure;
+  if(weatherParticles)weatherParticles.geometry.setDrawRange(0,preset.weatherParticles);
+  cityVegetationCullTimer=0;
+  syncSettings();
+  resize();
+}
+function updateShadowAnchor() {
+  if(!sun.castShadow||!player)return;
+  sun.position.set(player.position.x-28,player.position.y+42,player.position.z+20);
+  sun.target.position.copy(player.position);
+  sun.target.updateMatrixWorld();
 }
 function startGame() {
 refreshDailyDate();
@@ -1607,6 +1664,7 @@ steerVelocity = 0;
 citySpeedMps = 0;
 cityDriftSlip = 0;
 cityImpactBounce = 0;
+citySuspensionVelocity = 0;
 cityCameraHeight = 0;
 cityFallSpeed = 0;
 cityFootFallSpeed = 0;
@@ -1787,7 +1845,8 @@ sun.intensity = night ? 0.18 : 2.2;
 sun.color.set(night ? 0x9ab8ff : 0xffe6c6);
 if (player?.userData.headlamp) player.userData.headlamp.intensity = night ? 2.8 : 0;
 const fogRanges={clear:[140,340],rain:[105,245],fog:[38,155],snow:[75,205]}[weatherMode] || [140,340];
-scene.fog.near=fogRanges[0]; scene.fog.far=fogRanges[1];
+const fogScale=GRAPHICS_QUALITY_PRESETS[graphicsQuality].fogScale;
+scene.fog.near=fogRanges[0]*fogScale; scene.fog.far=fogRanges[1]*fogScale;
 save('tr-night', night);
 syncSettings();
 }
@@ -1800,7 +1859,8 @@ function setWeather(mode) {
     fog: [38, 155, 0.8, 0.75, 0.94],
     snow: [75, 205, 1.05, 1.0, 0.82]
   }[weatherMode];
-  scene.fog.near = cfg[0]; scene.fog.far = cfg[1];
+  const fogScale=GRAPHICS_QUALITY_PRESETS[graphicsQuality].fogScale;
+  scene.fog.near = cfg[0]*fogScale; scene.fog.far = cfg[1]*fogScale;
   hemi.intensity = cfg[2]; sun.intensity = cfg[3];
   roadMat.roughness = cfg[4];
   roadMat.metalness = weatherMode === 'rain' ? 0.16 : 0.02;
@@ -1817,6 +1877,7 @@ function setWeather(mode) {
       weatherParticles=new THREE.Points(geometry,new THREE.PointsMaterial({color:0x9cc9e8,size:0.06,transparent:true,opacity:0.55}));
       scene.add(weatherParticles);
     }
+    weatherParticles.geometry.setDrawRange(0,GRAPHICS_QUALITY_PRESETS[graphicsQuality].weatherParticles);
     weatherParticles.visible=true;
     weatherParticles.material.color.setHex(weatherMode==='snow'?0xeaf6ff:0x9cc9e8);
     weatherParticles.material.size=weatherMode==='snow'?0.11:0.055;
@@ -1882,7 +1943,7 @@ function updateWeather(dt) {
   if (weatherParticles?.visible) {
     const attr=weatherParticles.geometry.attributes.position;
     const speed=weatherMode==='snow'?5:34;
-    for(let i=0;i<attr.count;i++){
+    for(let i=0;i<Math.min(attr.count,GRAPHICS_QUALITY_PRESETS[graphicsQuality].weatherParticles);i++){
       let y=attr.getY(i)-speed*dt, z=attr.getZ(i)+(weatherMode==='snow'?5:8)*dt;
       if(y<0||z>18){y=12+Math.random()*10;z=-90-Math.random()*25;attr.setX(i,(Math.random()-.5)*42);}
       attr.setY(i,y);attr.setZ(i,z);
@@ -2812,14 +2873,18 @@ function makeWorldTriangleMesh(vertices, name, material, userData = {}) {
 function isDriveForSpeedRoadMaterial(name) {
   return /^(street(?:\s*\d+)?|street texture|parking|pista)$/i.test((name||'').trim());
 }
+function isDriveForSpeedWalkableMaterial(name) {
+  return /^materialpiso$/i.test((name||'').trim());
+}
 function createDriveForSpeedRoadWaterSurfaces(root) {
   root.updateMatrixWorld(true);
-  const chunks = {road:new Map(),water:new Map()};
+  const chunks = {road:new Map(),ground:new Map(),water:new Map()};
   const roadMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
+  const groundMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
   const waterMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
-  let roadTriangles = 0, waterTriangles = 0;
+  let roadTriangles = 0, groundTriangles = 0, waterTriangles = 0;
 
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
@@ -2832,7 +2897,9 @@ function createDriveForSpeedRoadWaterSurfaces(root) {
       : [{start:0,count:index ? index.count : position.count,materialIndex:0}];
     for (const group of groups) {
       const materialName = materials[group.materialIndex]?.name;
-      const kind = isDriveForSpeedRoadMaterial(materialName) ? 'road' : (/^water/i.test((materialName||'').trim()) ? 'water' : null);
+      const kind = isDriveForSpeedRoadMaterial(materialName) ? 'road' :
+        isDriveForSpeedWalkableMaterial(materialName) ? 'ground' :
+        (/^water/i.test((materialName||'').trim()) ? 'water' : null);
       if (!kind) continue;
       const end = Math.min(group.start + group.count, index ? index.count : position.count);
       for (let i = group.start; i + 2 < end; i += 3) {
@@ -2842,7 +2909,7 @@ function createDriveForSpeedRoadWaterSurfaces(root) {
         a.fromBufferAttribute(position, ia).applyMatrix4(object.matrixWorld);
         b.fromBufferAttribute(position, ib).applyMatrix4(object.matrixWorld);
         c.fromBufferAttribute(position, ic).applyMatrix4(object.matrixWorld);
-        if (kind === 'road') {
+        if (kind === 'road'||kind==='ground') {
           edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
           if (Math.abs(normal.y) < 0.88) continue;
         }
@@ -2852,10 +2919,12 @@ function createDriveForSpeedRoadWaterSurfaces(root) {
         let chunk = chunks[kind].get(key);
         if (!chunk) chunks[kind].set(key,chunk={vertices:[],first:null,triangles:0});
         if (!chunk.first) chunk.first={x:centerX,y:centerY,z:centerZ};
-        if(kind==='road'&&normal.y<0)chunk.vertices.push(a.x,a.y,a.z,c.x,c.y,c.z,b.x,b.y,b.z);
+        if((kind==='road'||kind==='ground')&&normal.y<0)chunk.vertices.push(a.x,a.y,a.z,c.x,c.y,c.z,b.x,b.y,b.z);
         else chunk.vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
         chunk.triangles++;
-        if (kind === 'road') roadTriangles++; else waterTriangles++;
+        if (kind === 'road') roadTriangles++;
+        else if(kind==='ground')groundTriangles++;
+        else waterTriangles++;
       }
     }
   });
@@ -2863,25 +2932,32 @@ function createDriveForSpeedRoadWaterSurfaces(root) {
   let roadChunks = 0, waterChunks = 0;
   for (const [key,chunk] of chunks.road) {
     const mesh = makeWorldTriangleMesh(chunk.vertices,'DriveForSpeed_Road_'+key,roadMaterial,{
-      cityRoadSurface:true,cityRoadCandidate:chunk.first
+      cityRoadSurface:true,cityGroundSurface:true,cityRoadCandidate:chunk.first
     });
     cityRoot.add(mesh); roadChunks++;
+  }
+  let groundChunks = 0;
+  for(const [key,chunk] of chunks.ground) {
+    cityRoot.add(makeWorldTriangleMesh(chunk.vertices,'DriveForSpeed_Walkable_'+key,groundMaterial,{cityGroundSurface:true}));
+    groundChunks++;
   }
   for (const [key,chunk] of chunks.water) {
     const mesh = makeWorldTriangleMesh(chunk.vertices,'DriveForSpeed_Water_'+key,waterMaterial,{cityWaterSurface:true});
     cityRoot.add(mesh); waterChunks++;
   }
-  console.info('Prepared Drive for Speed road and water surfaces:',{roadTriangles,roadChunks,waterTriangles,waterChunks});
-  return {roadTriangles,roadChunks,waterTriangles,waterChunks};
+  console.info('Prepared Drive for Speed road, sidewalk, and water surfaces:',{roadTriangles,roadChunks,groundTriangles,groundChunks,waterTriangles,waterChunks});
+  return {roadTriangles,roadChunks,groundTriangles,groundChunks,waterTriangles,waterChunks};
 }
 function createDriveForSpeedCollisionSources(root) {
   root.updateMatrixWorld(true);
   const wallChunks = new Map();
   const ceilingChunks = new Map();
+  const curbGroundChunks = new Map();
   const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
   const edgeA = new THREE.Vector3(), edgeB = new THREE.Vector3(), normal = new THREE.Vector3();
   const material = new THREE.MeshBasicMaterial({side:THREE.DoubleSide});
-  let wallTriangles = 0, ceilingTriangles = 0, sourceMeshes = 0;
+  const curbGroundMaterial = new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:0,depthWrite:false});
+  let wallTriangles = 0, ceilingTriangles = 0, curbTopTriangles = 0, sourceMeshes = 0;
 
   root.traverse((object) => {
     if (!object.isMesh || !object.geometry?.attributes?.position) return;
@@ -2902,6 +2978,14 @@ function createDriveForSpeedCollisionSources(root) {
         edgeA.subVectors(b,a); edgeB.subVectors(c,a); normal.crossVectors(edgeA,edgeB).normalize();
         const centerX=(a.x+b.x+c.x)/3,centerZ=(a.z+b.z+c.z)/3;
         const key=Math.floor(centerX/CITY_COLLISION_CELL)+','+Math.floor(centerZ/CITY_COLLISION_CELL);
+        if(obstacleMaterial&&Math.abs(normal.y)>0.88) {
+          const groundKey=Math.floor(centerX/CITY_GROUND_CELL)+','+Math.floor(centerZ/CITY_GROUND_CELL);
+          let curbVertices=curbGroundChunks.get(groundKey);if(!curbVertices)curbGroundChunks.set(groundKey,curbVertices=[]);
+          if(normal.y<0)curbVertices.push(a.x,a.y,a.z,c.x,c.y,c.z,b.x,b.y,b.z);
+          else curbVertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
+          curbTopTriangles++;
+          continue;
+        }
         const chunks=!obstacleMaterial&&Math.abs(normal.y)>0.72?ceilingChunks:wallChunks;
         let vertices=chunks.get(key); if(!vertices)chunks.set(key,vertices=[]);
         vertices.push(a.x,a.y,a.z,b.x,b.y,b.z,c.x,c.y,c.z);
@@ -2912,9 +2996,10 @@ function createDriveForSpeedCollisionSources(root) {
 
   cityCollisionSources = [...wallChunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Building_Walls_'+key,material,{cityWallCollider:true}));
   cityCeilingSources = [...ceilingChunks].map(([key,vertices]) => makeWorldTriangleMesh(vertices,'DriveForSpeed_Camera_Ceilings_'+key,material,{cityCameraCeiling:true}));
+  for(const [key,vertices] of curbGroundChunks)cityRoot.add(makeWorldTriangleMesh(vertices,'DriveForSpeed_Curb_Tops_'+key,curbGroundMaterial,{cityGroundSurface:true,cityCurbSurface:true}));
   if (!sourceMeshes || !wallTriangles) throw new Error('Drive for Speed map contains no usable building wall surfaces.');
-  console.info('Prepared Drive for Speed building/block hitboxes and tunnel ceilings:',{sourceMeshes,wallColliderCells:cityCollisionSources.length,wallTriangles,cameraCeilingCells:cityCeilingSources.length,ceilingTriangles});
-  return {sourceMeshes,wallTriangles,ceilingTriangles};
+  console.info('Prepared Drive for Speed building/block hitboxes, curbs, and tunnel ceilings:',{sourceMeshes,wallColliderCells:cityCollisionSources.length,wallTriangles,cameraCeilingCells:cityCeilingSources.length,ceilingTriangles,curbTopTriangles});
+  return {sourceMeshes,wallTriangles,ceilingTriangles,curbTopTriangles};
 }
 function buildCityCollisionGrid(root) {
   cityCollisionGrid.clear();
@@ -2949,12 +3034,15 @@ function buildCityCollisionGrid(root) {
     if (!object.isMesh || !object.geometry) return;
     bounds.setFromObject(object);
     if (bounds.isEmpty()) return;
-    if (object.userData.cityRoadSurface) {
-      // Index the same sampled road triangles for spawning and live driving.
+    if (object.userData.cityGroundSurface) {
       addBoundsToGrid(cityGroundGrid,object,bounds,CITY_GROUND_CELL);
-      addBoundsToGrid(cityRoadMeshGrid,object,bounds,CITY_GROUND_CELL);
-      const sample = object.userData.cityRoadCandidate;
-      if (sample) cityRoadCandidates.push({x:sample.x,z:sample.z,fallbackY:sample.y,mesh:object});
+      if(object.userData.cityRoadSurface) {
+        // Keep the traffic routes restricted to actual asphalt, while the
+        // player and pedestrian ground query can also use sidewalks and curb tops.
+        addBoundsToGrid(cityRoadMeshGrid,object,bounds,CITY_GROUND_CELL);
+        const sample = object.userData.cityRoadCandidate;
+        if (sample) cityRoadCandidates.push({x:sample.x,z:sample.z,fallbackY:sample.y,mesh:object});
+      }
       return;
     }
     if (object.userData.cityWaterSurface) {
@@ -3063,7 +3151,7 @@ function cityGroundPathStatus(startX,startZ,endX,endZ,startGroundY,maxStep=1) {
     if(groundY===null) {
       return {supported:false,water:cityIsWaterAt(x,z,null),groundY};
     }
-    if(Math.abs(groundY-previousY)>4) {
+    if(Math.abs(groundY-previousY)>CITY_MAX_DRIVABLE_STEP) {
       return {supported:false,water:false,groundY};
     }
     previousY=groundY;
@@ -3090,6 +3178,7 @@ function showCityRecoveryScreen(titleText, detailText) {
   citySpeedMps=0;
   cityDriftSlip=0;
   cityImpactBounce=0;
+  citySuspensionVelocity=0;
   actualSpeed=0;
   for(const key of Object.keys(keys))keys[key]=false;
   if(!cityRespawnScreen) {
@@ -3132,6 +3221,7 @@ function respawnCityPlayer() {
   citySpeedMps=0;
   cityDriftSlip=0;
   cityImpactBounce=0;
+  citySuspensionVelocity=0;
   cityFallSpeed=0;
   cityFootFallSpeed=0;
   actualSpeed=0;
@@ -3349,7 +3439,7 @@ function createOpenCityWorld() {
       const size = sourceBounds.getSize(new THREE.Vector3());
       const center = sourceBounds.getCenter(new THREE.Vector3());
       const horizontalSize = Math.max(size.x,size.z);
-      if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01 || !Number.isFinite(size.y)) {
+    if (!Number.isFinite(horizontalSize) || horizontalSize < 0.01 || !Number.isFinite(size.y)) {
         throw new Error('Drive for Speed city GLB has invalid dimensions or orientation.');
       }
 
@@ -3359,7 +3449,8 @@ function createOpenCityWorld() {
       map.traverse((object) => {
         if (!object.isMesh) return;
         object.castShadow = false;
-        object.receiveShadow = false;
+        object.receiveShadow = GRAPHICS_QUALITY_PRESETS[graphicsQuality].shadowMapSize>0;
+        object.userData.graphicsShadowReceiver = true;
         object.frustumCulled = true;
       });
       cityRoot.add(map);
@@ -3754,7 +3845,8 @@ function updateCityVegetation(dt) {
   if (cityVegetationCullTimer > 0) return;
   cityVegetationCullTimer = 0.5;
   const position = cityOnFoot && cityAvatar ? cityAvatar.position : player.position;
-  const maxDistanceSq = 245 * 245;
+  const vegetationDistance=GRAPHICS_QUALITY_PRESETS[graphicsQuality].vegetationDistance;
+  const maxDistanceSq = vegetationDistance * vegetationDistance;
   for (const chunk of cityVegetationChunks) {
     const dx=chunk.center.x-position.x,dz=chunk.center.z-position.z;
     chunk.mesh.visible=dx*dx+dz*dz<=maxDistanceSq;
@@ -3778,14 +3870,7 @@ function updateOpenCity(dt,stats) {
     if(citySpeedMps>1.2)citySpeedMps=Math.max(0,citySpeedMps-(stats.braking/3.6+citySpeedMps*0.8)*dt);
     else citySpeedMps=Math.max(-8*VEHICLE_SPEED_SCALE,citySpeedMps-stats.acceleration/3.6*0.55*dt);
   } else if(forward) citySpeedMps=Math.min(maxSpeed,citySpeedMps+stats.acceleration/3.6*(nitroActive?1.55:1)*dt);
-  else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.38,dt);
-  const steer=(keys.left?1:0)-(keys.right?1:0);
-  const speedFactor=THREE.MathUtils.clamp(Math.abs(citySpeedMps)/9,0.18,1.35);
-  const drifting=keys.drift&&steer!==0&&Math.abs(citySpeedMps)>5.5;
-  cityHeading+=steer*1.35*(drifting?0.62:1)*speedFactor*Math.sign(citySpeedMps||1)*dt;
-  const targetDriftSlip=drifting?steer*Math.min(3.2,Math.abs(citySpeedMps)*0.2):0;
-  cityDriftSlip=THREE.MathUtils.damp(cityDriftSlip,targetDriftSlip,drifting?3.6:1.45,dt);
-  cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
+  else citySpeedMps=THREE.MathUtils.damp(citySpeedMps,0,0.58,dt);
   let oldGroundY=cityGroundHeightAt(player.position.x,player.position.z);
   if(oldGroundY===null&&cityRespawnCooldown<=0&&cityIsWaterAt(player.position.x,player.position.z,null)) {
     showWaterDeathScreen();
@@ -3797,19 +3882,29 @@ function updateOpenCity(dt,stats) {
     cityHeading=citySpawnHeading;
     citySpeedMps=0;
     cityDriftSlip=0;
+    citySuspensionVelocity=0;
   }
+  const oldRoadY=cityRoadHeightAt({x:player.position.x,z:player.position.z,mesh:CITY_ROAD_SURFACE_MARKER});
+  const onRoad=oldRoadY!==null;
+  const weatherGrip=weatherMode==='snow'?0.62:weatherMode==='rain'?0.84:1;
+  const surfaceGrip=(onRoad?1:0.58)*weatherGrip;
+  const surfaceFactor=onRoad?1:0.8;
+  if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.86,2.4,dt);
+  const steer=(keys.left?1:0)-(keys.right?1:0);
+  const drifting=keys.drift&&steer!==0&&Math.abs(citySpeedMps)>5.5;
+  const maxYawRate=Math.min(1.15,9.5/Math.max(3,Math.abs(citySpeedMps)));
+  cityHeading+=steer*maxYawRate*(drifting?0.8:1)*surfaceGrip*Math.sign(citySpeedMps||1)*dt;
+  const targetDriftSlip=drifting?steer*Math.min(3.2,Math.abs(citySpeedMps)*0.2):0;
+  cityDriftSlip=THREE.MathUtils.damp(cityDriftSlip,targetDriftSlip,drifting?2.6*weatherGrip:1.45*surfaceGrip,dt);
+  cityHeading=THREE.MathUtils.euclideanModulo(cityHeading+Math.PI,Math.PI*2)-Math.PI;
   player.rotation.y=cityHeading-(drifting?steer*0.18:0);
   const direction=new THREE.Vector3(Math.sin(cityHeading),0,Math.cos(cityHeading));
   const oldPosition=player.position.clone();
   // Sample the imported city's ground triangles; the old artificial grid does
   // not match this model's streets.
-  const onRoad=oldGroundY!==null;
-  const oldRoadY=cityRoadHeightAt({x:oldPosition.x,z:oldPosition.z,mesh:CITY_ROAD_SURFACE_MARKER});
-  const surfaceFactor=onRoad?1:0.84;
-  if(!onRoad)citySpeedMps=THREE.MathUtils.damp(citySpeedMps,citySpeedMps*0.94,1.8,dt);
   player.position.addScaledVector(direction,citySpeedMps*surfaceFactor*dt);
   const lateral=new THREE.Vector3(Math.cos(cityHeading),0,-Math.sin(cityHeading));
-  const lateralSpeed=(steer*citySpeedMps*0.12+cityDriftSlip)*surfaceFactor;
+  const lateralSpeed=cityDriftSlip*surfaceFactor;
   player.position.addScaledVector(lateral,lateralSpeed*dt);
   // Check the swept path at short intervals. Unsupported gaps block movement
   // instead of applying gravity, while water still triggers the recovery screen.
@@ -3818,14 +3913,6 @@ function updateOpenCity(dt,stats) {
     : cityGroundPathStatus(oldPosition.x,oldPosition.z,player.position.x,player.position.z,oldGroundY);
   let playerGroundY=groundPath.groundY;
   if(groundPath.water&&cityRespawnCooldown<=0){showWaterDeathScreen();return;}
-  const nextRoadY=cityRoadHeightAt({x:player.position.x,z:player.position.z,mesh:CITY_ROAD_SURFACE_MARKER});
-  const hitRoadEdge=groundPath.supported&&cityRespawnCooldown<=0&&oldRoadY!==null&&nextRoadY===null;
-  if(hitRoadEdge) {
-    player.position.x=oldPosition.x;
-    player.position.z=oldPosition.z;
-    playerGroundY=oldGroundY;
-    recoilCityPlayer(Math.abs(citySpeedMps),2);
-  }
   if(!groundPath.supported) {
     player.position.x=oldPosition.x;
     player.position.z=oldPosition.z;
@@ -3836,7 +3923,7 @@ function updateOpenCity(dt,stats) {
   }
   // Cast against nearby triangles from the imported city tiles so streets stay
   // clear while building walls still block the player.
-  if (!hitRoadEdge&&cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12,player)) {
+  if (cityCollisionCount && cityBuildingBlocksPath(oldPosition,player.position,playerGroundY??oldPosition.y-0.12,player)) {
     player.position.x = oldPosition.x;
     player.position.z = oldPosition.z;
     const impactSpeed=Math.abs(citySpeedMps);
@@ -3844,10 +3931,19 @@ function updateOpenCity(dt,stats) {
     recoilCityPlayer(impactSpeed,impactSpeed>10?8:3);
   }
   cityFallSpeed=0;
-  player.position.y=playerGroundY===null?citySpawnPosition.y:playerGroundY+0.12;
+  const groundStep=playerGroundY===null?0:playerGroundY-oldGroundY;
+  if(Math.abs(groundStep)>0.025&&Math.abs(groundStep)<=CITY_MAX_DRIVABLE_STEP) {
+    citySuspensionVelocity=THREE.MathUtils.clamp(citySuspensionVelocity+groundStep*6,-3,3);
+    cityImpactBounce=Math.max(cityImpactBounce,THREE.MathUtils.clamp(Math.abs(groundStep)*1.8,0.08,0.8));
+  }
+  const targetRideHeight=(playerGroundY===null?citySpawnPosition.y:playerGroundY)+0.12;
+  const suspensionAcceleration=(targetRideHeight-player.position.y)*110-citySuspensionVelocity*20;
+  citySuspensionVelocity=THREE.MathUtils.clamp(citySuspensionVelocity+suspensionAcceleration*dt,-5,5);
+  player.position.y+=citySuspensionVelocity*dt;
   player.userData.body.rotation.z=THREE.MathUtils.damp(player.userData.body.rotation.z||0,-steer*(drifting?0.15:0.09),4,dt);
   cityImpactBounce=THREE.MathUtils.damp(cityImpactBounce,0,3.5,dt);
-  player.userData.body.rotation.x=THREE.MathUtils.damp(player.userData.body.rotation.x||0,-cityImpactBounce*0.18,6,dt);
+  player.rotation.x=THREE.MathUtils.damp(player.rotation.x||0,THREE.MathUtils.clamp(-citySuspensionVelocity*0.025-cityImpactBounce*0.045,-0.22,0.22),6,dt);
+  player.userData.body.rotation.x=THREE.MathUtils.damp(player.userData.body.rotation.x||0,0,6,dt);
   for(const wheel of player.userData.wheels||[])wheel.rotation.x+=citySpeedMps*dt;
   actualSpeed=Math.abs(citySpeedMps)*3.6;
   emitDriftSmoke(player,dt,citySpeedMps,steer,drifting);
@@ -4075,6 +4171,7 @@ requestAnimationFrame(animate);
 const now=performance.now();
 adaptRenderQuality(now);
 update(Math.min(clock.getDelta(), 0.04));
+updateShadowAnchor();
 renderer.render(scene, camera);
 }
 function setControl(name, value) { keys[name] = value; }
@@ -4089,6 +4186,7 @@ if (paused) {
 }
 window.addEventListener('keydown', (event) => {
 const key = event.key.toLowerCase();
+if (event.target instanceof HTMLSelectElement) return;
 if(cityRespawnPending){if(key==='enter')respawnCityPlayer();return;}
 if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' '].includes(key)) event.preventDefault();
 if (key === 'escape' && running) { togglePause(); return; }
@@ -4246,6 +4344,7 @@ autoAccel = !autoAccel;
 save('tr-auto', autoAccel);
 syncSettings();
 });
+$('graphics-quality').addEventListener('change',(event)=>applyGraphicsQuality(event.target.value));
 $('road-mode-toggle').disabled = true;
 $('road-mode-toggle').setAttribute('aria-label', 'One-way traffic only');
 $('night-toggle').addEventListener('click', () => setNight(!night));
@@ -4267,6 +4366,7 @@ createPlayer();
 setNight(night);
 setLocation(locationIndex);
 setWeather(weatherMode);
+applyGraphicsQuality(graphicsQuality);
 renderGarage();
 refreshWallet();
 resize();
