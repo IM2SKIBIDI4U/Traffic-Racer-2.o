@@ -1,4 +1,6 @@
-## AI traffic and camera modes
+## A rip Off game of traffic racer
 
-- The AI vehicle GLB is stored using Git LFS. `asset-compat.js` redirects the game loader to GitHub's LFS media endpoint so GitHub Pages retrieves the actual model rather than the tiny LFS pointer file.
-- Added four switchable views: chase, hood, cockpit, and overhead. Use the on-screen camera button or press **C** while driving; the selected view is saved locally.
+A fun game that has a massice map drive and and to be added planes and boats and break the law and the police will be after you 
+Dm me at im2skibidiu on discord for update requests 
+
+## https://im2skibidi4u.github.io/Traffic-Racer-2.o/
